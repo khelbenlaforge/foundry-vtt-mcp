@@ -22,6 +22,8 @@ import { SceneTools } from './tools/scene.js';
 
 import { ActorCreationTools } from './tools/actor-creation.js';
 
+import { CreatureImportTools } from './tools/creature-import.js';
+
 import { QuestCreationTools } from './tools/quest-creation.js';
 
 import { DiceRollTools } from './tools/dice-roll.js';
@@ -1066,6 +1068,8 @@ async function startBackend(): Promise<void> {
 
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
 
+  const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
+
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
 
   const questCreationTools = new QuestCreationTools({ foundryClient, logger });
@@ -1297,6 +1301,8 @@ async function startBackend(): Promise<void> {
 
     ...actorCreationTools.getToolDefinitions(),
 
+    ...creatureImportTools.getToolDefinitions(),
+
     ...dsa5CharacterCreator.getToolDefinitions(),
 
     ...questCreationTools.getToolDefinitions(),
@@ -1470,6 +1476,12 @@ async function startBackend(): Promise<void> {
                   break;
 
                 // Actor creation tools
+
+                case 'import-creature-from-vault':
+
+                  result = await creatureImportTools.handleImportCreatureFromVault(args);
+
+                  break;
 
                 case 'create-actor-from-compendium':
 

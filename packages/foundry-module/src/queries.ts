@@ -92,6 +92,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.cancel-map-job`] = this.handleCancelMapJob.bind(this);
     CONFIG.queries[`${modulePrefix}.upload-generated-map`] = this.handleUploadGeneratedMap.bind(this);
 
+    // Plutonium creature import
+    CONFIG.queries[`${modulePrefix}.importCreatureFromJson`] = this.handleImportCreatureFromJson.bind(this);
+
     // Item usage queries
     CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
 
@@ -347,6 +350,56 @@ export class QueryHandlers {
   isMethodRegistered(method: string): boolean {
     const queryKey = `${MODULE_ID}.${method}`;
     return queryKey in CONFIG.queries && typeof CONFIG.queries[queryKey] === 'function';
+  }
+
+  // ===== PLUTONIUM IMPORT =====
+
+  /**
+   * Import a creature from 5etools JSON via Plutonium's importer.
+   * plutonium-addon-automation handles Midi-QOL / CPR / DAE wiring automatically.
+   */
+  private async handleImportCreatureFromJson(data: {
+    entry: Record<string, any>;
+    addToScene?: boolean;
+    quantity?: number;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+
+      this.dataAccess.validateFoundryState();
+
+      const plutonium = (game as any).modules?.get('plutonium');
+      if (!plutonium?.active) {
+        return { error: 'Plutonium module is not active', success: false };
+      }
+      const creatureImporter = plutonium?.api?.importer?.creature;
+      if (!creatureImporter?.pImportEntry) {
+        return { error: 'Plutonium creature importer not available — is Foundry fully loaded?', success: false };
+      }
+
+      // Plutonium import — plutonium-addon-automation fires automatically on the created actor
+      const importResult = await creatureImporter.pImportEntry(data.entry);
+
+      // pImportEntry may return the actor directly or wrap it
+      const actor = importResult?.actor ?? importResult;
+      const actorId = actor?.id ?? null;
+
+      // Optionally place token(s) on the active scene
+      if (data.addToScene && actorId && (canvas as any)?.scene) {
+        const qty = Math.max(1, data.quantity ?? 1);
+        const tokenDataArr = Array.from({ length: qty }, (_, i) => ({
+          actorId,
+          x: 100 + i * 100,
+          y: 100,
+        }));
+        await (canvas as any).scene.createEmbeddedDocuments('Token', tokenDataArr);
+      }
+
+      return { success: true, actorId };
+    } catch (error) {
+      throw new Error(`importCreatureFromJson failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   // ===== PHASE 2: WRITE OPERATION HANDLERS =====
