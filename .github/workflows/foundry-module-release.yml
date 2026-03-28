@@ -25,8 +25,11 @@ jobs:
 
       - name: Create module zip
         run: |
-          cd packages/foundry-module
-          zip -r ../../foundry-vtt-mcp.zip . -x ".*" -x "node_modules/*" -x "src/*" -x "tsconfig.json"
+          mkdir -p /tmp/foundry-mcp-bridge
+          cp -r packages/foundry-module/. /tmp/foundry-mcp-bridge/
+          rm -rf /tmp/foundry-mcp-bridge/node_modules /tmp/foundry-mcp-bridge/src /tmp/foundry-mcp-bridge/tsconfig.json
+          cd /tmp
+          zip -r $GITHUB_WORKSPACE/foundry-vtt-mcp.zip foundry-mcp-bridge/ -x "foundry-mcp-bridge/.*"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
