@@ -27,8 +27,6 @@ export class QueryHandlers {
    */
   registerHandlers(): void {
     const modulePrefix = MODULE_ID;
-    console.log(`[${modulePrefix}] registerHandlers() START — CONFIG.queries type: ${typeof CONFIG.queries}`);
-
     // Character/Actor queries
     CONFIG.queries[`${modulePrefix}.getCharacterInfo`] = this.handleGetCharacterInfo.bind(this);
     CONFIG.queries[`${modulePrefix}.listActors`] = this.handleListActors.bind(this);
@@ -95,7 +93,6 @@ export class QueryHandlers {
 
     // Plutonium creature import
     CONFIG.queries[`${modulePrefix}.importCreatureFromJson`] = this.handleImportCreatureFromJson.bind(this);
-    console.log(`[${modulePrefix}] importCreatureFromJson registered — keys now: ${Object.keys(CONFIG.queries).filter(k => k.startsWith(modulePrefix)).length}`);
 
     // Item usage queries
     CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
