@@ -93,6 +93,7 @@ export class QueryHandlers {
 
     // Plutonium creature import
     CONFIG.queries[`${modulePrefix}.importCreatureFromJson`] = this.handleImportCreatureFromJson.bind(this);
+    CONFIG.queries[`${modulePrefix}.addItemToActor`] = this.handleAddItemToActor.bind(this);
 
     // Item usage queries
     CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
@@ -398,6 +399,58 @@ export class QueryHandlers {
       return { success: true, actorId };
     } catch (error) {
       throw new Error(`importCreatureFromJson failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleAddItemToActor(data: {
+    actorIdentifier: string;
+    name: string;
+    type?: string;
+    description: string;
+    quantity?: number;
+    uses?: { value: number; max: number; recovery: string };
+    rarity?: string;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+
+      this.dataAccess.validateFoundryState();
+
+      const actor = (game as any).actors?.getName(data.actorIdentifier)
+        ?? (game as any).actors?.get(data.actorIdentifier);
+
+      if (!actor) {
+        return { error: `Actor not found: ${data.actorIdentifier}`, success: false };
+      }
+
+      // Map recovery period to dnd5e v5 recovery array format
+      const recoveryMap: Record<string, string> = { lr: 'lr', sr: 'sr', day: 'day' };
+      const recoveryPeriod = data.uses ? (recoveryMap[data.uses.recovery] ?? 'lr') : 'lr';
+
+      const itemData: Record<string, any> = {
+        name: data.name,
+        type: data.type ?? 'feat',
+        system: {
+          description: { value: data.description },
+          quantity: data.quantity ?? 1,
+          ...(data.rarity ? { rarity: data.rarity } : {}),
+          ...(data.uses ? {
+            uses: {
+              value: data.uses.value,
+              max: String(data.uses.max),
+              recovery: [{ period: recoveryPeriod, type: 'recoverAll' }],
+            },
+          } : {}),
+        },
+      };
+
+      const created = await actor.createEmbeddedDocuments('Item', [itemData]);
+      const itemId = created?.[0]?.id ?? null;
+
+      return { success: true, itemId, actorId: actor.id };
+    } catch (error) {
+      throw new Error(`addItemToActor failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

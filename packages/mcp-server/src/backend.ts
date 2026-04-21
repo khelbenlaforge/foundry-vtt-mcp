@@ -23,6 +23,7 @@ import { SceneTools } from './tools/scene.js';
 import { ActorCreationTools } from './tools/actor-creation.js';
 
 import { CreatureImportTools } from './tools/creature-import.js';
+import { ItemImportTools } from './tools/item-import.js';
 
 import { QuestCreationTools } from './tools/quest-creation.js';
 
@@ -1069,6 +1070,7 @@ async function startBackend(): Promise<void> {
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
 
   const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
+  const itemImportTools = new ItemImportTools({ foundryClient, logger });
 
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
 
@@ -1316,6 +1318,7 @@ async function startBackend(): Promise<void> {
     ...tokenManipulationTools.getToolDefinitions(),
 
     ...mapGenerationTools.getToolDefinitions(),
+    ...itemImportTools.getToolDefinitions(),
 
   ];
 
@@ -1645,6 +1648,10 @@ async function startBackend(): Promise<void> {
 
                   result = await mapGenerationTools.switchScene(args);
 
+                  break;
+
+                case 'add-item-to-actor':
+                  result = await itemImportTools.handleAddItemToActor(args);
                   break;
 
                 default:

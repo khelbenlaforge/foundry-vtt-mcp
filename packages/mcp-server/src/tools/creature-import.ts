@@ -74,7 +74,7 @@ function mapEntries(items: Array<{ name: string; desc: string }>) {
 }
 
 function extractStatblockYaml(markdown: string): string | null {
-  const match = markdown.match(/```statblock\n([\s\S]*?)```/);
+  const match = markdown.match(/```statblock\r?\n([\s\S]*?)```/);
   return match ? match[1] : null;
 }
 
