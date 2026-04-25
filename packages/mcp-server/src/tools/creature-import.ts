@@ -28,6 +28,10 @@ const ALIGNMENT_MAP: Record<string, string[]> = {
 
 const STAT_NAMES = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function parseSpeed(speedStr: string): Record<string, number> {
   const result: Record<string, number> = {};
   const parts = speedStr.split(',').map(s => s.trim());
@@ -80,6 +84,24 @@ function extractStatblockYaml(markdown: string): string | null {
 
 function parseStatblock(rawYaml: string): Record<string, any> {
   const parsed = yamlLoad(rawYaml) as Record<string, any>;
+  const hasStatsArray = Array.isArray(parsed.stats)
+    && parsed.stats.length === 6
+    && parsed.stats.every(isFiniteNumber);
+  const hasStatFields = STAT_NAMES.every(stat => isFiniteNumber(parsed[stat]));
+
+  if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+    throw new Error('Statblock is missing required field: name');
+  }
+  if (!isFiniteNumber(parsed.ac)) {
+    throw new Error('Statblock is missing required field: ac');
+  }
+  if (!isFiniteNumber(parsed.hp)) {
+    throw new Error('Statblock is missing required field: hp');
+  }
+  if (!hasStatsArray && !hasStatFields) {
+    throw new Error('Statblock is missing required field: stats');
+  }
+
   const entry: Record<string, any> = {};
 
   // Identity
@@ -113,8 +135,10 @@ function parseStatblock(rawYaml: string): Record<string, any> {
   entry.speed = parseSpeed(parsed.speed ?? '30 ft.');
 
   // Ability scores
-  if (Array.isArray(parsed.stats) && parsed.stats.length === 6) {
+  if (hasStatsArray) {
     STAT_NAMES.forEach((stat, i) => { entry[stat] = parsed.stats[i]; });
+  } else if (hasStatFields) {
+    STAT_NAMES.forEach((stat) => { entry[stat] = parsed[stat]; });
   }
 
   // Saving throws
@@ -237,13 +261,17 @@ export class CreatureImportTools {
     });
     const { filePath, addToScene, quantity } = schema.parse(args);
 
+    if (!Number.isFinite(quantity) || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+      throw new Error('quantity must be a finite positive integer no greater than 20');
+    }
+
     // Read vault file
     let markdown: string;
     try {
       markdown = readFileSync(filePath, 'utf-8');
       if (markdown.charCodeAt(0) === 0xFEFF) markdown = markdown.slice(1); // strip BOM
-    } catch {
-      throw new Error(`Could not read file: ${filePath}`);
+    } catch (err) {
+      throw new Error(`Could not read file: ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Extract statblock codeblock
@@ -265,6 +293,10 @@ export class CreatureImportTools {
       addToScene,
       quantity,
     }) as Record<string, any>;
+
+    if (result?.success === false) {
+      throw new Error(result.error ?? 'importCreatureFromJson failed');
+    }
 
     const actorId = result?.actorId ?? 'unknown';
     const placed  = addToScene ? ` Placed ${quantity} token(s) on scene.` : '';

@@ -64,6 +64,7 @@ export declare class QueryHandlers {
      * plutonium-addon-automation handles Midi-QOL / CPR / DAE wiring automatically.
      */
     private handleImportCreatureFromJson;
+    private handleAddItemToActor;
     /**
      * Handle actor creation from specific compendium entry
      */

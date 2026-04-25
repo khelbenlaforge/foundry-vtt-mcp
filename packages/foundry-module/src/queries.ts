@@ -2,6 +2,8 @@ import { MODULE_ID } from './constants.js';
 import { FoundryDataAccess } from './data-access.js';
 import { ComfyUIManager } from './comfyui-manager.js';
 
+const ALLOWED_RECOVERY_PERIODS = ['lr', 'sr', 'day'] as const;
+
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
   private comfyuiManager: ComfyUIManager;
@@ -385,6 +387,10 @@ export class QueryHandlers {
       const actor = importResult?.actor ?? importResult;
       const actorId = actor?.id ?? null;
 
+      if (!actorId) {
+        return { success: false, error: 'Plutonium import returned no actor ID' };
+      }
+
       // Optionally place token(s) on the active scene
       if (data.addToScene && actorId && (canvas as any)?.scene) {
         const qty = Math.max(1, data.quantity ?? 1);
@@ -417,8 +423,19 @@ export class QueryHandlers {
 
       this.dataAccess.validateFoundryState();
 
-      const actor = (game as any).actors?.getName(data.actorIdentifier)
-        ?? (game as any).actors?.get(data.actorIdentifier);
+      const actors = (game as any).actors;
+      let actor = actors?.get(data.actorIdentifier) ?? null;
+
+      if (!actor) {
+        const nameMatches = actors?.filter((candidate: any) => candidate.name === data.actorIdentifier) ?? [];
+        if (nameMatches.length > 1) {
+          return {
+            error: `Actor identifier is ambiguous: ${nameMatches.map((candidate: any) => candidate.name).join(', ')}`,
+            success: false,
+          };
+        }
+        actor = nameMatches[0] ?? null;
+      }
 
       if (!actor) {
         return { error: `Actor not found: ${data.actorIdentifier}`, success: false };
@@ -426,7 +443,10 @@ export class QueryHandlers {
 
       // Map recovery period to dnd5e v5 recovery array format
       const recoveryMap: Record<string, string> = { lr: 'lr', sr: 'sr', day: 'day' };
-      const recoveryPeriod = data.uses ? (recoveryMap[data.uses.recovery] ?? 'lr') : 'lr';
+      if (data.uses && !ALLOWED_RECOVERY_PERIODS.includes(data.uses.recovery as typeof ALLOWED_RECOVERY_PERIODS[number])) {
+        return { error: `Invalid uses.recovery: ${data.uses.recovery}`, success: false };
+      }
+      const recoveryPeriod = data.uses ? recoveryMap[data.uses.recovery] : 'lr';
 
       const itemData: Record<string, any> = {
         name: data.name,
@@ -447,6 +467,10 @@ export class QueryHandlers {
 
       const created = await actor.createEmbeddedDocuments('Item', [itemData]);
       const itemId = created?.[0]?.id ?? null;
+
+      if (!itemId) {
+        return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
+      }
 
       return { success: true, itemId, actorId: actor.id };
     } catch (error) {

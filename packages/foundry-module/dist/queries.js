@@ -1,6 +1,7 @@
 import { MODULE_ID } from './constants.js';
 import { FoundryDataAccess } from './data-access.js';
 import { ComfyUIManager } from './comfyui-manager.js';
+const ALLOWED_RECOVERY_PERIODS = ['lr', 'sr', 'day'];
 export class QueryHandlers {
     dataAccess;
     comfyuiManager;
@@ -76,6 +77,7 @@ export class QueryHandlers {
         CONFIG.queries[`${modulePrefix}.upload-generated-map`] = this.handleUploadGeneratedMap.bind(this);
         // Plutonium creature import
         CONFIG.queries[`${modulePrefix}.importCreatureFromJson`] = this.handleImportCreatureFromJson.bind(this);
+        CONFIG.queries[`${modulePrefix}.addItemToActor`] = this.handleAddItemToActor.bind(this);
         // Item usage queries
         CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
         // Character search queries
@@ -309,6 +311,9 @@ export class QueryHandlers {
             // pImportEntry may return the actor directly or wrap it
             const actor = importResult?.actor ?? importResult;
             const actorId = actor?.id ?? null;
+            if (!actorId) {
+                return { success: false, error: 'Plutonium import returned no actor ID' };
+            }
             // Optionally place token(s) on the active scene
             if (data.addToScene && actorId && canvas?.scene) {
                 const qty = Math.max(1, data.quantity ?? 1);
@@ -323,6 +328,60 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`importCreatureFromJson failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    async handleAddItemToActor(data) {
+        try {
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed)
+                return { error: 'Access denied', success: false };
+            this.dataAccess.validateFoundryState();
+            const actors = game.actors;
+            let actor = actors?.get(data.actorIdentifier) ?? null;
+            if (!actor) {
+                const nameMatches = actors?.filter((candidate) => candidate.name === data.actorIdentifier) ?? [];
+                if (nameMatches.length > 1) {
+                    return {
+                        error: `Actor identifier is ambiguous: ${nameMatches.map((candidate) => candidate.name).join(', ')}`,
+                        success: false,
+                    };
+                }
+                actor = nameMatches[0] ?? null;
+            }
+            if (!actor) {
+                return { error: `Actor not found: ${data.actorIdentifier}`, success: false };
+            }
+            // Map recovery period to dnd5e v5 recovery array format
+            const recoveryMap = { lr: 'lr', sr: 'sr', day: 'day' };
+            if (data.uses && !ALLOWED_RECOVERY_PERIODS.includes(data.uses.recovery)) {
+                return { error: `Invalid uses.recovery: ${data.uses.recovery}`, success: false };
+            }
+            const recoveryPeriod = data.uses ? recoveryMap[data.uses.recovery] : 'lr';
+            const itemData = {
+                name: data.name,
+                type: data.type ?? 'feat',
+                system: {
+                    description: { value: data.description },
+                    quantity: data.quantity ?? 1,
+                    ...(data.rarity ? { rarity: data.rarity } : {}),
+                    ...(data.uses ? {
+                        uses: {
+                            value: data.uses.value,
+                            max: String(data.uses.max),
+                            recovery: [{ period: recoveryPeriod, type: 'recoverAll' }],
+                        },
+                    } : {}),
+                },
+            };
+            const created = await actor.createEmbeddedDocuments('Item', [itemData]);
+            const itemId = created?.[0]?.id ?? null;
+            if (!itemId) {
+                return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
+            }
+            return { success: true, itemId, actorId: actor.id };
+        }
+        catch (error) {
+            throw new Error(`addItemToActor failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     // ===== PHASE 2: WRITE OPERATION HANDLERS =====

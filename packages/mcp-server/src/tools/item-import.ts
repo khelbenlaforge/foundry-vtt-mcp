@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { FoundryClient } from '../foundry-client.js';
 import { Logger } from '../logger.js';
 
+const ALLOWED_ITEM_TYPES = ['feat', 'equipment', 'consumable', 'weapon', 'loot'] as const;
+const ALLOWED_ITEM_RARITIES = ['common', 'uncommon', 'rare', 'veryRare', 'legendary', 'artifact', 'unique'] as const;
+const ALLOWED_RECOVERY_PERIODS = ['lr', 'sr', 'day'] as const;
+
 export interface ItemImportToolsOptions {
   foundryClient: FoundryClient;
   logger: Logger;
@@ -74,15 +78,17 @@ export class ItemImportTools {
     const schema = z.object({
       actorIdentifier: z.string(),
       name: z.string(),
-      type: z.string().optional().default('feat'),
+      type: z.enum(ALLOWED_ITEM_TYPES).optional().default('feat'),
       description: z.string(),
-      quantity: z.number().optional().default(1),
+      quantity: z.number().int().positive().finite().optional().default(1),
       uses: z.object({
-        value: z.number(),
-        max: z.number(),
-        recovery: z.string(),
+        value: z.number().int().nonnegative().finite(),
+        max: z.number().int().nonnegative().finite(),
+        recovery: z.enum(ALLOWED_RECOVERY_PERIODS),
+      }).refine((uses) => uses.value <= uses.max, {
+        message: 'uses.value must be less than or equal to uses.max',
       }).optional(),
-      rarity: z.string().optional(),
+      rarity: z.enum(ALLOWED_ITEM_RARITIES).optional(),
     });
     const params = schema.parse(args);
 
