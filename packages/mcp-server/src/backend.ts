@@ -8,6 +8,8 @@ import * as net from 'net';
 
 import { spawn, ChildProcess } from 'child_process';
 
+import { evaluateLockFile } from './lock.js';
+
 import { config } from './config.js';
 
 import { Logger } from './logger.js';
@@ -35,6 +37,10 @@ import { MapGenerationTools } from './tools/map-generation.js';
 import { TokenManipulationTools } from './tools/token-manipulation.js';
 
 import { DSA5CharacterCreator } from './systems/dsa5/character-creator.js';
+
+import { DnD5eAddFeatureTool } from './tools/dnd5e/add-feature.js';
+import { DnD5eNpcTools } from './tools/dnd5e/npc.js';
+import { DnD5eFeaturesFromCompendiumTools } from './tools/dnd5e/features.js';
 
 const CONTROL_HOST = '127.0.0.1';
 
@@ -177,8 +183,22 @@ function acquireLock(): boolean {
           try {
             process.kill(lockPid, 0);
 
-            // Backend already running - return false to exit gracefully
-            return false;
+            // A process with this PID is alive. Validate it is actually our
+            // backend (node.exe / node) and that the lock file is not stale.
+            // PID reuse by unrelated OS processes (e.g. GameInputRedistService
+            // on Windows) would otherwise cause a false "already running" exit.
+            if (evaluateLockFile(lockPid, LOCK_FILE) === 'orphaned') {
+              console.error(
+                `Removing orphaned backend lock for PID ${lockPid} ` +
+                `(process is not node.exe or lock file is stale)`,
+              );
+              try { fs.unlinkSync(LOCK_FILE); } catch {}
+              lockFd = fs.openSync(LOCK_FILE, 'wx');
+            } else {
+              // Backend is genuinely running — exit gracefully
+              return false;
+            }
+
           } catch {
             console.error(`Removing stale backend lock for PID ${lockPid}`);
 
@@ -1167,6 +1187,10 @@ async function startBackend(): Promise<void> {
 
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
 
+  const dnd5eAddFeatureTool              = new DnD5eAddFeatureTool({ foundryClient, logger });
+  const dnd5eNpcTools                    = new DnD5eNpcTools({ foundryClient, logger });
+  const dnd5eFeaturesFromCompendiumTools = new DnD5eFeaturesFromCompendiumTools({ foundryClient, logger });
+
   const questCreationTools = new QuestCreationTools({ foundryClient, logger });
 
   const diceRollTools = new DiceRollTools({ foundryClient, logger });
@@ -1384,6 +1408,10 @@ async function startBackend(): Promise<void> {
 
     ...dsa5CharacterCreator.getToolDefinitions(),
 
+    ...dnd5eAddFeatureTool.getToolDefinitions(),
+    ...dnd5eNpcTools.getToolDefinitions(),
+    ...dnd5eFeaturesFromCompendiumTools.getToolDefinitions(),
+
     ...questCreationTools.getToolDefinitions(),
 
     ...diceRollTools.getToolDefinitions(),
@@ -1547,6 +1575,26 @@ async function startBackend(): Promise<void> {
 
                 case 'list-dsa5-archetypes':
                   result = await dsa5CharacterCreator.handleListArchetypes(args);
+
+                  break;
+
+                // D&D 5e tools
+
+                case 'dnd5e-add-feature':
+
+                  result = await dnd5eAddFeatureTool.handleAddFeature(args);
+
+                  break;
+
+                case 'dnd5e-create-npc':
+
+                  result = await dnd5eNpcTools.handleCreateNpc(args);
+
+                  break;
+
+                case 'dnd5e-add-features-from-compendium':
+
+                  result = await dnd5eFeaturesFromCompendiumTools.handleAddFeaturesFromCompendium(args);
 
                   break;
 
