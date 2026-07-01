@@ -436,7 +436,13 @@ export class QueryHandlers {
     };
 
     const uses = this.buildActivityUses(input.uses);
-    if (uses) activity.uses = uses;
+    if (uses) {
+      activity.uses = uses;
+      activity.consumption = {
+        targets: [{ type: 'activityUses', target: '', value: '1' }],
+        scaling: { allowed: false },
+      };
+    }
 
     const toDamagePart = (part: any) => ({
       number: part.number,
