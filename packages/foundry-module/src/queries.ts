@@ -515,7 +515,10 @@ export class QueryHandlers {
       sense_range: () => [{ key: `system.attributes.senses.ranges.${input.target}`, mode: OVERRIDE, value: input.value }],
       hp_bonus_flat: () => [{ key: 'system.attributes.hp.bonuses.overall', mode: ADD, value: v(input.value) }],
       hp_bonus_per_level: () => [{ key: 'system.attributes.hp.bonuses.level', mode: ADD, value: v(input.value) }],
-      ac_formula: () => [{ key: 'system.attributes.ac.formula', mode: OVERRIDE, value: v(input.value) }],
+      ac_formula: () => [
+        { key: 'system.attributes.ac.calc', mode: OVERRIDE, value: 'custom' },
+        { key: 'system.attributes.ac.formula', mode: OVERRIDE, value: v(input.value) },
+      ],
       initiative_advantage: () => [{ key: 'flags.dnd5e.initiativeAdv', mode: OVERRIDE, value: input.value }],
       reroll_ones: () => [{ key: 'flags.dnd5e.halflingLucky', mode: OVERRIDE, value: input.value }],
       reroll_lowest_advantage: () => [{ key: 'flags.dnd5e.elvenAccuracy', mode: OVERRIDE, value: input.value }],

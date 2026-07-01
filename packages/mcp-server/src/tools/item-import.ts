@@ -33,6 +33,10 @@ const damagePartSchema = z.object({
   types: z.array(z.string()).min(1),
 });
 
+const healingSchema = damagePartSchema.omit({ types: true }).extend({
+  types: z.array(z.string()).optional().default([]),
+});
+
 const activitySchema = z.object({
   type: z.enum(ALLOWED_ACTIVITY_TYPES),
   name: z.string(),
@@ -56,7 +60,7 @@ const activitySchema = z.object({
     onSave: z.enum(['half', 'none', 'full']).optional().default('half'),
   }).optional(),
   damageParts: z.array(damagePartSchema).optional(),
-  healing: damagePartSchema.optional(),
+  healing: healingSchema.optional(),
   roll: z.object({ formula: z.string(), name: z.string().optional() }).optional(),
 }).refine((a) => a.type !== 'attack' || !!a.attack, { message: 'attack activities require an `attack` block' })
   .refine((a) => a.type !== 'save' || !!a.save, { message: 'save activities require a `save` block' })
