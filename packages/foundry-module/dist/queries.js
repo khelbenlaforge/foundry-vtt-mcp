@@ -502,7 +502,9 @@ export class QueryHandlers {
                     // equipment/weapon items unless equipped (and attuned, if required).
                     ...(isEquippable ? {
                         equipped: data.equipped ?? (hasPassives ? true : false),
-                        ...(data.requiresAttunement ? { attunement: 'required', attuned: true } : {}),
+                        // Attunement is a magic-item-only mechanic in dnd5e; the system couples the
+                        // attunement UI/data to the "mgc" (magical) properties flag.
+                        ...(data.requiresAttunement ? { attunement: 'required', attuned: true, properties: ['mgc'] } : {}),
                     } : {}),
                 },
             };
