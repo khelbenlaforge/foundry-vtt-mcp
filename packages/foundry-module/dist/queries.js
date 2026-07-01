@@ -413,6 +413,7 @@ export class QueryHandlers {
     }
     buildPassiveEffectChanges(input) {
         const ADD = 2;
+        const UPGRADE = 4;
         const OVERRIDE = 5;
         const v = (val) => String(val);
         const table = {
@@ -424,8 +425,9 @@ export class QueryHandlers {
             save_bonus: () => [{ key: 'system.bonuses.abilities.save', mode: ADD, value: v(input.value) }],
             skill_check_bonus: () => [{ key: 'system.bonuses.abilities.skill', mode: ADD, value: v(input.value) }],
             spell_dc_bonus: () => [{ key: 'system.bonuses.spell.dc', mode: ADD, value: v(input.value) }],
-            skill_proficiency: () => [{ key: `system.skills.${input.target}.value`, mode: OVERRIDE, value: 1 }],
-            skill_expertise: () => [{ key: `system.skills.${input.target}.value`, mode: OVERRIDE, value: 2 }],
+            // UPGRADE (not OVERRIDE) so an actor who already has expertise in this skill isn't downgraded to plain proficiency.
+            skill_proficiency: () => [{ key: `system.skills.${input.target}.value`, mode: UPGRADE, value: 1 }],
+            skill_expertise: () => [{ key: `system.skills.${input.target}.value`, mode: UPGRADE, value: 2 }],
             damage_resistance: () => [{ key: 'system.traits.dr.value', mode: ADD, value: v(input.value) }],
             damage_immunity: () => [{ key: 'system.traits.di.value', mode: ADD, value: v(input.value) }],
             damage_vulnerability: () => [{ key: 'system.traits.dv.value', mode: ADD, value: v(input.value) }],
@@ -498,9 +500,9 @@ export class QueryHandlers {
                     } : {}),
                     // Equip/attunement gating: dnd5e suppresses transfer effects on
                     // equipment/weapon items unless equipped (and attuned, if required).
-                    ...(hasPassives && isEquippable ? {
-                        equipped: true,
-                        ...(data.rarity && data.rarity !== 'common' ? { attunement: 'attuned' } : {}),
+                    ...(isEquippable ? {
+                        equipped: data.equipped ?? (hasPassives ? true : false),
+                        ...(data.requiresAttunement ? { attunement: 'required', attuned: true } : {}),
                     } : {}),
                 },
             };
@@ -526,23 +528,32 @@ export class QueryHandlers {
             if (!itemId) {
                 return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
             }
-            // Effects can't reference their own item's UUID before the item exists — patch origin post-creation.
-            if (hasPassives && createdItem.effects?.size) {
-                const effectUpdates = createdItem.effects.map((effect) => ({ _id: effect.id, origin: createdItem.uuid }));
-                await createdItem.updateEmbeddedDocuments('ActiveEffect', effectUpdates);
-            }
+            // The parent item now exists on the actor regardless of what happens below — a failure in
+            // origin-patching or stub creation must not be reported as a total failure (the caller would
+            // otherwise assume no item was created and could retry, duplicating it).
             const stubItemIds = [];
-            if (data.inertAbilities?.length) {
-                const stubData = data.inertAbilities.map((ability) => ({
-                    name: `${data.name}: ${ability.name}`,
-                    type: 'feat',
-                    system: { description: { value: ability.description } },
-                }));
-                const createdStubs = await actor.createEmbeddedDocuments('Item', stubData);
-                for (const stub of createdStubs)
-                    stubItemIds.push(stub.id);
+            let warning;
+            try {
+                // Effects can't reference their own item's UUID before the item exists — patch origin post-creation.
+                if (hasPassives && createdItem.effects?.size) {
+                    const effectUpdates = createdItem.effects.map((effect) => ({ _id: effect.id, origin: createdItem.uuid }));
+                    await createdItem.updateEmbeddedDocuments('ActiveEffect', effectUpdates);
+                }
+                if (data.inertAbilities?.length) {
+                    const stubData = data.inertAbilities.map((ability) => ({
+                        name: `${data.name}: ${ability.name}`,
+                        type: 'feat',
+                        system: { description: { value: ability.description } },
+                    }));
+                    const createdStubs = await actor.createEmbeddedDocuments('Item', stubData);
+                    for (const stub of createdStubs)
+                        stubItemIds.push(stub.id);
+                }
             }
-            return { success: true, itemId, actorId: actor.id, stubItemIds };
+            catch (error) {
+                warning = `Item "${data.name}" was created (${itemId}), but a follow-up step failed: ${error instanceof Error ? error.message : String(error)}. Effect origin or inert stubs may be incomplete — check the item on the actor.`;
+            }
+            return { success: true, itemId, actorId: actor.id, stubItemIds, ...(warning ? { warning } : {}) };
         }
         catch (error) {
             throw new Error(`addItemToActor failed: ${error instanceof Error ? error.message : String(error)}`);

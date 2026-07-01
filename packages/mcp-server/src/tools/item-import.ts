@@ -68,12 +68,19 @@ const activitySchema = z.object({
   .refine((a) => a.type !== 'utility' || !!a.roll, { message: 'utility activities require a `roll` block' })
   .refine((a) => a.type !== 'damage' || !!a.damageParts?.length, { message: 'damage activities require `damageParts`' });
 
+const PASSIVE_TYPES_REQUIRING_TARGET = [
+  'skill_proficiency', 'skill_expertise', 'sense_range', 'movement_speed',
+] as const;
+
 const passiveEffectSchema = z.object({
   name: z.string(),
   passiveType: z.enum(ALLOWED_PASSIVE_TYPES),
   value: z.union([z.string(), z.number(), z.boolean()]),
   target: z.string().optional(),
-});
+}).refine(
+  (p) => !PASSIVE_TYPES_REQUIRING_TARGET.includes(p.passiveType as typeof PASSIVE_TYPES_REQUIRING_TARGET[number]) || !!p.target,
+  { message: `\`target\` is required for passiveType in: ${PASSIVE_TYPES_REQUIRING_TARGET.join(', ')}` },
+);
 
 const inertAbilitySchema = z.object({
   name: z.string(),
@@ -140,6 +147,15 @@ export class ItemImportTools {
             rarity: {
               type: 'string',
               description: 'Item rarity: "common", "uncommon", "rare", "veryRare", "legendary", "artifact", "unique"',
+            },
+            requiresAttunement: {
+              type: 'boolean',
+              description: 'Whether the item requires attunement (per its actual rules text — do not infer from rarity). Default: false. Only meaningful for "equipment"/"weapon" items carrying `passiveEffects`.',
+              default: false,
+            },
+            equipped: {
+              type: 'boolean',
+              description: 'Explicitly mark the item equipped/unequipped. If omitted, defaults to true when the item is "equipment"/"weapon" and carries `passiveEffects` (since transfer effects are suppressed on unequipped gear) — set explicitly to false to import a stash/reserve item unequipped (its passives won\'t apply until equipped in Foundry).',
             },
             activities: {
               type: 'array',
@@ -266,6 +282,8 @@ export class ItemImportTools {
       quantity: z.number().int().positive().finite().optional().default(1),
       uses: usesSchema.optional(),
       rarity: z.enum(ALLOWED_ITEM_RARITIES).optional(),
+      requiresAttunement: z.boolean().optional().default(false),
+      equipped: z.boolean().optional(),
       activities: z.array(activitySchema).optional(),
       passiveEffects: z.array(passiveEffectSchema).optional(),
       inertAbilities: z.array(inertAbilitySchema).optional(),
@@ -283,6 +301,9 @@ export class ItemImportTools {
     const parts = [`Added "${params.name}" to actor. Item ID: ${result.itemId}`];
     if (Array.isArray(result.stubItemIds) && result.stubItemIds.length) {
       parts.push(`Inert stub items created: ${result.stubItemIds.join(', ')}`);
+    }
+    if (result.warning) {
+      parts.push(`WARNING: ${result.warning}`);
     }
     return parts.join(' ');
   }

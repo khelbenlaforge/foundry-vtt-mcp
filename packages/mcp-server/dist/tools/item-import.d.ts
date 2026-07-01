@@ -59,6 +59,15 @@ export declare class ItemImportTools {
                     type: string;
                     description: string;
                 };
+                requiresAttunement: {
+                    type: string;
+                    description: string;
+                    default: boolean;
+                };
+                equipped: {
+                    type: string;
+                    description: string;
+                };
                 activities: {
                     type: string;
                     description: string;
