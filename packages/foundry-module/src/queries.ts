@@ -408,6 +408,126 @@ export class QueryHandlers {
     }
   }
 
+  private buildActivityUses(uses?: { value: number; max: number; recovery: string }): any {
+    if (!uses) return undefined;
+    return {
+      spent: uses.max - uses.value,
+      max: String(uses.max),
+      recovery: [{ period: uses.recovery, type: 'recoverAll' }],
+    };
+  }
+
+  private buildActivity(input: any, itemName: string): [string, any] {
+    const id = (foundry as any).utils.randomID();
+    const activity: Record<string, any> = {
+      _id: id,
+      type: input.type,
+      name: `${itemName}: ${input.name}`,
+      activation: {
+        type: input.activation?.type ?? 'action',
+        value: input.activation?.value ?? null,
+      },
+      description: { value: input.description ?? '' },
+      duration: { value: null, units: 'inst' },
+      range: input.range ?? {},
+      target: input.target
+        ? { affects: { count: input.target.count, type: input.target.type }, prompt: true }
+        : { affects: {}, prompt: true },
+    };
+
+    const uses = this.buildActivityUses(input.uses);
+    if (uses) activity.uses = uses;
+
+    const toDamagePart = (part: any) => ({
+      number: part.number,
+      denomination: part.denomination,
+      bonus: part.bonus ?? '',
+      types: part.types ?? [],
+      custom: { enabled: false, formula: '' },
+      scaling: { mode: 'whole', number: 1 },
+    });
+
+    switch (input.type) {
+      case 'attack':
+        activity.attack = {
+          ability: input.attack?.ability || undefined,
+          bonus: input.attack?.bonus ?? '',
+          critical: {},
+          flat: false,
+          type: { value: input.attack?.attackType ?? 'melee', classification: input.attack?.classification ?? 'weapon' },
+        };
+        if (input.damageParts?.length) {
+          activity.damage = { critical: {}, includeBase: false, parts: input.damageParts.map(toDamagePart) };
+        }
+        break;
+      case 'damage':
+        activity.damage = { critical: {}, includeBase: false, parts: (input.damageParts ?? []).map(toDamagePart) };
+        break;
+      case 'save':
+        activity.save = {
+          ability: input.save.ability,
+          dc: typeof input.save.dc === 'number' ? { calculation: '', formula: String(input.save.dc) } : { calculation: input.save.dc, formula: '' },
+        };
+        activity.damage = { onSave: input.save.onSave ?? 'half', parts: (input.damageParts ?? []).map(toDamagePart) };
+        break;
+      case 'heal':
+        activity.healing = {
+          number: input.healing.number,
+          denomination: input.healing.denomination,
+          bonus: input.healing.bonus ?? '',
+          types: ['healing'],
+          custom: { enabled: false, formula: '' },
+          scaling: { mode: 'whole', number: 1 },
+        };
+        break;
+      case 'utility':
+        activity.roll = { formula: input.roll.formula, name: input.roll.name ?? '', prompt: true, visible: true };
+        break;
+    }
+
+    return [id, activity];
+  }
+
+  private buildPassiveEffectChanges(input: any): { key: string; mode: number; value: any; priority: number | undefined }[] {
+    const ADD = 2;
+    const OVERRIDE = 5;
+    const v = (val: any) => String(val);
+
+    const table: Record<string, () => { key: string; mode: number; value: any }[]> = {
+      attack_bonus_mwak: () => [{ key: 'system.bonuses.mwak.attack', mode: ADD, value: v(input.value) }],
+      attack_bonus_rwak: () => [{ key: 'system.bonuses.rwak.attack', mode: ADD, value: v(input.value) }],
+      damage_bonus_mwak: () => [{ key: 'system.bonuses.mwak.damage', mode: ADD, value: v(input.value) }],
+      damage_bonus_rwak: () => [{ key: 'system.bonuses.rwak.damage', mode: ADD, value: v(input.value) }],
+      ability_check_bonus: () => [{ key: 'system.bonuses.abilities.check', mode: ADD, value: v(input.value) }],
+      save_bonus: () => [{ key: 'system.bonuses.abilities.save', mode: ADD, value: v(input.value) }],
+      skill_check_bonus: () => [{ key: 'system.bonuses.abilities.skill', mode: ADD, value: v(input.value) }],
+      spell_dc_bonus: () => [{ key: 'system.bonuses.spell.dc', mode: ADD, value: v(input.value) }],
+      skill_proficiency: () => [{ key: `system.skills.${input.target}.value`, mode: OVERRIDE, value: 1 }],
+      skill_expertise: () => [{ key: `system.skills.${input.target}.value`, mode: OVERRIDE, value: 2 }],
+      damage_resistance: () => [{ key: 'system.traits.dr.value', mode: ADD, value: v(input.value) }],
+      damage_immunity: () => [{ key: 'system.traits.di.value', mode: ADD, value: v(input.value) }],
+      damage_vulnerability: () => [{ key: 'system.traits.dv.value', mode: ADD, value: v(input.value) }],
+      condition_immunity: () => [{ key: 'system.traits.ci.value', mode: ADD, value: v(input.value) }],
+      language: () => [{ key: 'system.traits.languages.value', mode: ADD, value: v(input.value) }],
+      size: () => [{ key: 'system.traits.size', mode: OVERRIDE, value: v(input.value) }],
+      movement_speed: () => [{ key: `system.attributes.movement.${input.target ?? 'walk'}`, mode: OVERRIDE, value: input.value }],
+      movement_hover: () => [{ key: 'system.attributes.movement.hover', mode: OVERRIDE, value: input.value }],
+      sense_range: () => [{ key: `system.attributes.senses.ranges.${input.target}`, mode: OVERRIDE, value: input.value }],
+      hp_bonus_flat: () => [{ key: 'system.attributes.hp.bonuses.overall', mode: ADD, value: v(input.value) }],
+      hp_bonus_per_level: () => [{ key: 'system.attributes.hp.bonuses.level', mode: ADD, value: v(input.value) }],
+      ac_formula: () => [{ key: 'system.attributes.ac.formula', mode: OVERRIDE, value: v(input.value) }],
+      initiative_advantage: () => [{ key: 'flags.dnd5e.initiativeAdv', mode: OVERRIDE, value: input.value }],
+      reroll_ones: () => [{ key: 'flags.dnd5e.halflingLucky', mode: OVERRIDE, value: input.value }],
+      reroll_lowest_advantage: () => [{ key: 'flags.dnd5e.elvenAccuracy', mode: OVERRIDE, value: input.value }],
+      crit_threshold: () => [{ key: 'flags.dnd5e.weaponCriticalThreshold', mode: OVERRIDE, value: input.value }],
+      crit_extra_dice: () => [{ key: 'flags.dnd5e.meleeCriticalDamageDice', mode: ADD, value: v(input.value) }],
+    };
+
+    const build = table[input.passiveType];
+    if (!build) throw new Error(`Unknown passiveType: ${input.passiveType}`);
+    return build().map((change) => ({ ...change, priority: change.mode === OVERRIDE ? 20 : undefined }));
+  }
+
   private async handleAddItemToActor(data: {
     actorIdentifier: string;
     name: string;
@@ -416,6 +536,9 @@ export class QueryHandlers {
     quantity?: number;
     uses?: { value: number; max: number; recovery: string };
     rarity?: string;
+    activities?: any[];
+    passiveEffects?: any[];
+    inertAbilities?: { name: string; description: string }[];
   }): Promise<any> {
     try {
       const gmCheck = this.validateGMAccess();
@@ -448,9 +571,13 @@ export class QueryHandlers {
       }
       const recoveryPeriod = data.uses ? recoveryMap[data.uses.recovery] : 'lr';
 
+      const itemType = data.type ?? 'feat';
+      const hasPassives = !!data.passiveEffects?.length;
+      const isEquippable = itemType === 'equipment' || itemType === 'weapon';
+
       const itemData: Record<string, any> = {
         name: data.name,
-        type: data.type ?? 'feat',
+        type: itemType,
         system: {
           description: { value: data.description },
           quantity: data.quantity ?? 1,
@@ -462,17 +589,59 @@ export class QueryHandlers {
               recovery: [{ period: recoveryPeriod, type: 'recoverAll' }],
             },
           } : {}),
+          // Equip/attunement gating: dnd5e suppresses transfer effects on
+          // equipment/weapon items unless equipped (and attuned, if required).
+          ...(hasPassives && isEquippable ? {
+            equipped: true,
+            ...(data.rarity && data.rarity !== 'common' ? { attunement: 'attuned' } : {}),
+          } : {}),
         },
       };
 
+      if (data.activities?.length) {
+        const activities: Record<string, any> = {};
+        for (const activityInput of data.activities) {
+          const [id, activity] = this.buildActivity(activityInput, data.name);
+          activities[id] = activity;
+        }
+        itemData.system.activities = activities;
+      }
+
+      if (hasPassives) {
+        itemData.effects = data.passiveEffects!.map((passiveInput) => ({
+          name: `${data.name}: ${passiveInput.name}`,
+          changes: this.buildPassiveEffectChanges(passiveInput),
+          transfer: true,
+          disabled: false,
+        }));
+      }
+
       const created = await actor.createEmbeddedDocuments('Item', [itemData]);
-      const itemId = created?.[0]?.id ?? null;
+      const createdItem = created?.[0] ?? null;
+      const itemId = createdItem?.id ?? null;
 
       if (!itemId) {
         return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
       }
 
-      return { success: true, itemId, actorId: actor.id };
+      // Effects can't reference their own item's UUID before the item exists — patch origin post-creation.
+      if (hasPassives && createdItem.effects?.size) {
+        const effectUpdates = createdItem.effects.map((effect: any) => ({ _id: effect.id, origin: createdItem.uuid }));
+        await createdItem.updateEmbeddedDocuments('ActiveEffect', effectUpdates);
+      }
+
+      const stubItemIds: string[] = [];
+      if (data.inertAbilities?.length) {
+        const stubData = data.inertAbilities.map((ability) => ({
+          name: `${data.name}: ${ability.name}`,
+          type: 'feat',
+          system: { description: { value: ability.description } },
+        }));
+        const createdStubs = await actor.createEmbeddedDocuments('Item', stubData);
+        for (const stub of createdStubs) stubItemIds.push(stub.id);
+      }
+
+      return { success: true, itemId, actorId: actor.id, stubItemIds };
     } catch (error) {
       throw new Error(`addItemToActor failed: ${error instanceof Error ? error.message : String(error)}`);
     }

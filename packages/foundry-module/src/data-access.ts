@@ -1642,7 +1642,7 @@ export class FoundryDataAccess {
 
       for (const spell of spellItems) {
         const spellSystem = spell.system as any;
-        const sourceClass = spellSystem?.sourceClass || 'general';
+        const sourceClass = spellSystem?.sourceItem || 'general';
 
         if (!spellsByClass[sourceClass]) {
           spellsByClass[sourceClass] = [];
