@@ -761,7 +761,13 @@ export class QueryHandlers {
       if (data.activities?.length) {
         const activities: Record<string, any> = {};
         for (const activityInput of data.activities) {
-          const [id, activity] = this.buildActivity(activityInput, data.name);
+          // buildActivity() is shared with add-item-to-actor, where "weapon" is the sensible default
+          // attack classification. For a spell's own casting activity, default to "spell" instead
+          // unless the caller explicitly asked for something else (e.g. a weapon-replacing cantrip).
+          const normalizedInput = activityInput.type === 'attack'
+            ? { ...activityInput, attack: { classification: 'spell', ...activityInput.attack } }
+            : activityInput;
+          const [id, activity] = this.buildActivity(normalizedInput, data.name);
           activities[id] = activity;
         }
         itemData.system.activities = activities;
@@ -779,23 +785,29 @@ export class QueryHandlers {
       // document clean — at createEmbeddedDocuments time the type isn't reliably resolved yet, so
       // component tags passed at creation get silently dropped (confirmed 2026-07-02: only the
       // system-derived "mgc" tag survives, none of the caller's vocal/somatic/etc.). Patch it in as
-      // a follow-up update, once the item fully exists and its type is settled.
-      // IMPORTANT — two prior attempts here both no-op'd silently: calling .update() directly on
-      // `createdItem` (the doc returned by createEmbeddedDocuments), and calling
-      // actor.updateEmbeddedDocuments() with a bare _id. Only fetching a FRESH reference via
-      // actor.items.get(itemId) and calling .update() on THAT reproduces the manual console repro
-      // that actually persisted (confirmed across a hard refresh, 2026-07-02) — but that manual test
-      // was run against an item that had existed for minutes; doing the exact same fetch+update
-      // immediately after creation (same tick) still silently no-ops. Yielding a tick before the
-      // fresh fetch lets the actor's items collection fully settle post-creation.
-      // Do not simplify this back to createdItem.update() or updateEmbeddedDocuments() without
-      // re-testing in console first.
+      // a follow-up update, once the item fully exists.
+      // UNRESOLVED, DOCUMENTED LIMITATION (see .claude/skills/foundry-item-import/SKILL.md Step 8 in
+      // the World Building vault) — every patch strategy tried still silently no-ops when called from
+      // this handler, even though the identical call works when typed manually in the console against
+      // an already-existing item: `createdItem.update()` (the create-returned ref),
+      // `actor.updateEmbeddedDocuments()` with a bare _id, a freshly-fetched
+      // `actor.items.get(itemId).update()`, and the same fresh-fetch with a 250ms settle delay first
+      // (the delay did NOT fix it, despite what an earlier version of this comment claimed — do not
+      // trust that the delay helps). No code-level cause was found on adversarial review of the
+      // CONFIG.queries dispatch path (queries.ts registration, handleQuery, socket-bridge.js) — it
+      // looks like a Foundry document-lifecycle quirk, not a bug in this handler's dispatch.
+      // Because the failure is a *silent* no-op (no exception), verify by reading the value back
+      // rather than trusting an absence of thrown errors — see the readback check below.
       let warning: string | undefined;
       if (components.length) {
         try {
-          await new Promise((resolve) => setTimeout(resolve, 250));
           const freshItem = actor.items.get(itemId);
           await freshItem.update({ 'system.properties': components });
+          const persisted = new Set(freshItem.system.properties ?? []);
+          const missing = components.filter((c) => !persisted.has(c));
+          if (missing.length) {
+            warning = `Item "${data.name}" was created (${itemId}), but these components did not persist: ${missing.join(', ')}. This is a known unresolved issue — tick the Components checkboxes on the sheet manually.`;
+          }
         } catch (error) {
           warning = `Item "${data.name}" was created (${itemId}), but setting spell components failed: ${error instanceof Error ? error.message : String(error)}. Check the Components field on the sheet.`;
         }

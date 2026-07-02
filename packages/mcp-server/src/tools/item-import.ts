@@ -338,7 +338,7 @@ export class ItemImportTools {
             },
             activities: {
               type: 'array',
-              description: 'The spell\'s actual casting roll(s) — same shape as add-item-to-actor activities (attack/save/heal/utility). Use type "attack" with attack.ability: "spellcasting" for a spell attack roll, or type "save" with save.dc: "spellcasting" for a save-DC spell. For a leveled spell (level > 0), the handler automatically adds spell-slot consumption at the spell\'s own level to each activity — do not pass consumption yourself. Omit only for a purely narrative/DM-adjudicated spell with no roll.',
+              description: 'The spell\'s actual casting roll(s) — same shape as add-item-to-actor activities (attack/save/heal/utility). Use type "attack" with attack.ability: "spellcasting" for a spell attack roll (classification defaults to "spell", not "weapon", for this tool), or type "save" with save.dc: "spellcasting" for a save-DC spell. Spell-slot consumption for a leveled spell (level > 0) needs no manual wiring — dnd5e defaults consumption.spellSlot to true and derives it automatically for any activity on a leveled spell item; do not pass a consumption target yourself. Omit activities only for a purely narrative/DM-adjudicated spell with no roll.',
               items: { type: 'object' },
             },
           },
@@ -412,6 +412,9 @@ export class ItemImportTools {
     }).refine(
       (p) => !p.components.includes('material') || !!p.materials,
       { message: '`materials` is required when components includes "material"' },
+    ).refine(
+      (p) => !p.materials || p.components.includes('material'),
+      { message: '`materials` was provided but components does not include "material" — add it, or drop `materials`' },
     );
     const params = schema.parse(args);
 
