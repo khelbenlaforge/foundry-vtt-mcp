@@ -651,11 +651,16 @@ export class QueryHandlers {
             // `createdItem` (the doc returned by createEmbeddedDocuments), and calling
             // actor.updateEmbeddedDocuments() with a bare _id. Only fetching a FRESH reference via
             // actor.items.get(itemId) and calling .update() on THAT reproduces the manual console repro
-            // that actually persisted (confirmed across a hard refresh, 2026-07-02). Do not simplify this
-            // back to createdItem.update() or updateEmbeddedDocuments() without re-testing in console first.
+            // that actually persisted (confirmed across a hard refresh, 2026-07-02) — but that manual test
+            // was run against an item that had existed for minutes; doing the exact same fetch+update
+            // immediately after creation (same tick) still silently no-ops. Yielding a tick before the
+            // fresh fetch lets the actor's items collection fully settle post-creation.
+            // Do not simplify this back to createdItem.update() or updateEmbeddedDocuments() without
+            // re-testing in console first.
             let warning;
             if (components.length) {
                 try {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
                     const freshItem = actor.items.get(itemId);
                     await freshItem.update({ 'system.properties': components });
                 }
