@@ -7,6 +7,9 @@ const ALLOWED_ITEM_RARITIES = ['common', 'uncommon', 'rare', 'veryRare', 'legend
 const ALLOWED_RECOVERY_PERIODS = ['lr', 'sr', 'day'] as const;
 const ALLOWED_ACTIVITY_TYPES = ['attack', 'damage', 'save', 'heal', 'utility'] as const;
 const ALLOWED_ACTIVATION_TYPES = ['action', 'bonus', 'reaction', 'minute', 'hour', 'special', ''] as const;
+const ALLOWED_SPELL_SCHOOLS = ['abj', 'con', 'div', 'enc', 'evo', 'ill', 'nec', 'trs'] as const;
+const ALLOWED_DURATION_UNITS = ['inst', 'turn', 'round', 'minute', 'hour', 'day', 'month', 'year', 'spec', 'perm'] as const;
+const ALLOWED_RANGE_UNITS = ['self', 'touch', 'ft', 'mi', 'spec'] as const;
 const ALLOWED_PASSIVE_TYPES = [
   'attack_bonus_mwak', 'attack_bonus_rwak', 'damage_bonus_mwak', 'damage_bonus_rwak',
   'ability_check_bonus', 'save_bonus', 'skill_check_bonus', 'spell_dc_bonus',
@@ -270,6 +273,57 @@ export class ItemImportTools {
           required: ['actorIdentifier', 'name', 'description'],
         },
       },
+      {
+        name: 'add-spell-to-actor',
+        description: 'Add a homebrew spell directly to a Foundry actor\'s spell list using createEmbeddedDocuments. Use for spells granted by a homebrew item (e.g. a wondrous spellbook) that aren\'t in any compendium. Set `prepared: false` to add the spell to the list without preparing it.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            actorIdentifier: { type: 'string', description: 'Actor name or ID' },
+            name: { type: 'string', description: 'Spell name' },
+            level: { type: 'number', description: '0 for a cantrip, 1-9 for a leveled spell' },
+            school: { type: 'string', description: `One of: ${ALLOWED_SPELL_SCHOOLS.join(', ')}` },
+            description: { type: 'string', description: 'HTML description of the spell' },
+            activation: {
+              type: 'object',
+              description: 'Defaults to a 1-action activation if omitted',
+              properties: {
+                type: { type: 'string', description: '"action" | "bonus" | "reaction" | "minute" | "hour" | "special"' },
+                value: { type: 'number' },
+                condition: { type: 'string', description: 'e.g. reaction trigger text' },
+              },
+            },
+            duration: {
+              type: 'object',
+              description: 'Defaults to instantaneous if omitted',
+              properties: {
+                value: { type: 'number' },
+                units: { type: 'string', description: `One of: ${ALLOWED_DURATION_UNITS.join(', ')}` },
+                concentration: { type: 'boolean' },
+              },
+            },
+            range: {
+              type: 'object',
+              properties: {
+                value: { type: 'number' },
+                units: { type: 'string', description: `One of: ${ALLOWED_RANGE_UNITS.join(', ')}` },
+              },
+            },
+            target: {
+              type: 'object',
+              properties: { count: { type: 'number' }, type: { type: 'string', description: 'e.g. "creature", "object", "self"' } },
+            },
+            prepared: { type: 'boolean', description: 'Whether the spell is currently prepared. Default: false (added to the list, unprepared).', default: false },
+            ritual: { type: 'boolean', description: 'Whether the spell can be cast as a ritual', default: false },
+            activities: {
+              type: 'array',
+              description: 'Same shape as add-item-to-actor activities (attack/damage/save/heal/utility) — omit for a purely narrative/DM-adjudicated spell.',
+              items: { type: 'object' },
+            },
+          },
+          required: ['actorIdentifier', 'name', 'level', 'school', 'description'],
+        },
+      },
     ];
   }
 
@@ -306,5 +360,44 @@ export class ItemImportTools {
       parts.push(`WARNING: ${result.warning}`);
     }
     return parts.join(' ');
+  }
+
+  async handleAddSpellToActor(args: unknown) {
+    const schema = z.object({
+      actorIdentifier: z.string(),
+      name: z.string(),
+      level: z.number().int().min(0).max(9),
+      school: z.enum(ALLOWED_SPELL_SCHOOLS),
+      description: z.string(),
+      activation: z.object({
+        type: z.enum(ALLOWED_ACTIVATION_TYPES).optional().default('action'),
+        value: z.number().int().positive().optional(),
+        condition: z.string().optional(),
+      }).optional(),
+      duration: z.object({
+        value: z.number().optional(),
+        units: z.enum(ALLOWED_DURATION_UNITS).optional().default('inst'),
+        concentration: z.boolean().optional(),
+      }).optional(),
+      range: z.object({
+        value: z.number().optional(),
+        units: z.enum(ALLOWED_RANGE_UNITS).optional().default('ft'),
+      }).optional(),
+      target: z.object({ count: z.number().optional(), type: z.string().optional() }).optional(),
+      prepared: z.boolean().optional().default(false),
+      ritual: z.boolean().optional().default(false),
+      activities: z.array(activitySchema).optional(),
+    });
+    const params = schema.parse(args);
+
+    this.logger.info('Adding spell to actor', { actor: params.actorIdentifier, spell: params.name });
+
+    const result = await this.foundryClient.query('foundry-mcp-bridge.addSpellToActor', params) as Record<string, any>;
+
+    if (!result?.success) {
+      throw new Error(result?.error ?? 'addSpellToActor failed');
+    }
+
+    return `Added "${params.name}" to actor's spell list (prepared: ${params.prepared}). Item ID: ${result.itemId}`;
   }
 }

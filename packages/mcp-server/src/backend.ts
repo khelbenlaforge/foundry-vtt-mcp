@@ -1654,6 +1654,10 @@ async function startBackend(): Promise<void> {
                   result = await itemImportTools.handleAddItemToActor(args);
                   break;
 
+                case 'add-spell-to-actor':
+                  result = await itemImportTools.handleAddSpellToActor(args);
+                  break;
+
                 default:
 
                   throw new Error(`Unknown tool: ${name}`);

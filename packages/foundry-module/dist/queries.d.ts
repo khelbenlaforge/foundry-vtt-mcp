@@ -68,6 +68,8 @@ export declare class QueryHandlers {
     private buildActivity;
     private buildPassiveEffectChanges;
     private handleAddItemToActor;
+    private resolveActor;
+    private handleAddSpellToActor;
     /**
      * Handle actor creation from specific compendium entry
      */

@@ -8,7 +8,7 @@ export declare class ItemImportTools {
     private foundryClient;
     private logger;
     constructor({ foundryClient, logger }: ItemImportToolsOptions);
-    getToolDefinitions(): {
+    getToolDefinitions(): ({
         name: string;
         description: string;
         inputSchema: {
@@ -271,9 +271,131 @@ export declare class ItemImportTools {
                         required: string[];
                     };
                 };
+                level?: never;
+                school?: never;
+                activation?: never;
+                duration?: never;
+                range?: never;
+                target?: never;
+                prepared?: never;
+                ritual?: never;
             };
             required: string[];
         };
-    }[];
+    } | {
+        name: string;
+        description: string;
+        inputSchema: {
+            type: string;
+            properties: {
+                actorIdentifier: {
+                    type: string;
+                    description: string;
+                };
+                name: {
+                    type: string;
+                    description: string;
+                };
+                level: {
+                    type: string;
+                    description: string;
+                };
+                school: {
+                    type: string;
+                    description: string;
+                };
+                description: {
+                    type: string;
+                    description: string;
+                };
+                activation: {
+                    type: string;
+                    description: string;
+                    properties: {
+                        type: {
+                            type: string;
+                            description: string;
+                        };
+                        value: {
+                            type: string;
+                        };
+                        condition: {
+                            type: string;
+                            description: string;
+                        };
+                    };
+                };
+                duration: {
+                    type: string;
+                    description: string;
+                    properties: {
+                        value: {
+                            type: string;
+                        };
+                        units: {
+                            type: string;
+                            description: string;
+                        };
+                        concentration: {
+                            type: string;
+                        };
+                    };
+                };
+                range: {
+                    type: string;
+                    properties: {
+                        value: {
+                            type: string;
+                        };
+                        units: {
+                            type: string;
+                            description: string;
+                        };
+                    };
+                };
+                target: {
+                    type: string;
+                    properties: {
+                        count: {
+                            type: string;
+                        };
+                        type: {
+                            type: string;
+                            description: string;
+                        };
+                    };
+                };
+                prepared: {
+                    type: string;
+                    description: string;
+                    default: boolean;
+                };
+                ritual: {
+                    type: string;
+                    description: string;
+                    default: boolean;
+                };
+                activities: {
+                    type: string;
+                    description: string;
+                    items: {
+                        type: string;
+                        properties?: never;
+                        required?: never;
+                    };
+                };
+                type?: never;
+                quantity?: never;
+                uses?: never;
+                rarity?: never;
+                requiresAttunement?: never;
+                equipped?: never;
+                passiveEffects?: never;
+                inertAbilities?: never;
+            };
+            required: string[];
+        };
+    })[];
     handleAddItemToActor(args: unknown): Promise<string>;
+    handleAddSpellToActor(args: unknown): Promise<string>;
 }

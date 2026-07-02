@@ -78,6 +78,7 @@ export class QueryHandlers {
         // Plutonium creature import
         CONFIG.queries[`${modulePrefix}.importCreatureFromJson`] = this.handleImportCreatureFromJson.bind(this);
         CONFIG.queries[`${modulePrefix}.addItemToActor`] = this.handleAddItemToActor.bind(this);
+        CONFIG.queries[`${modulePrefix}.addSpellToActor`] = this.handleAddSpellToActor.bind(this);
         // Item usage queries
         CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
         // Character search queries
@@ -559,6 +560,79 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`addItemToActor failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    resolveActor(actorIdentifier) {
+        const actors = game.actors;
+        let actor = actors?.get(actorIdentifier) ?? null;
+        if (!actor) {
+            const nameMatches = actors?.filter((candidate) => candidate.name === actorIdentifier) ?? [];
+            if (nameMatches.length > 1) {
+                return { actor: null, error: `Actor identifier is ambiguous: ${nameMatches.map((candidate) => candidate.name).join(', ')}` };
+            }
+            actor = nameMatches[0] ?? null;
+        }
+        if (!actor) {
+            return { actor: null, error: `Actor not found: ${actorIdentifier}` };
+        }
+        return { actor };
+    }
+    async handleAddSpellToActor(data) {
+        try {
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed)
+                return { error: 'Access denied', success: false };
+            this.dataAccess.validateFoundryState();
+            const { actor, error } = this.resolveActor(data.actorIdentifier);
+            if (!actor)
+                return { error, success: false };
+            const itemData = {
+                name: data.name,
+                type: 'spell',
+                system: {
+                    description: { value: data.description },
+                    level: data.level,
+                    school: data.school,
+                    method: 'spell',
+                    prepared: data.prepared ?? false,
+                    activation: {
+                        type: data.activation?.type ?? 'action',
+                        value: data.activation?.value ?? null,
+                        condition: data.activation?.condition ?? '',
+                    },
+                    duration: {
+                        value: data.duration?.value ?? null,
+                        units: data.duration?.units ?? 'inst',
+                        concentration: data.duration?.concentration ?? false,
+                    },
+                    range: {
+                        value: data.range?.value ?? null,
+                        units: data.range?.units ?? 'ft',
+                    },
+                    target: data.target
+                        ? { affects: { count: data.target.count, type: data.target.type } }
+                        : { affects: {} },
+                    ...(data.ritual ? { properties: ['ritual'] } : {}),
+                },
+            };
+            if (data.activities?.length) {
+                const activities = {};
+                for (const activityInput of data.activities) {
+                    const [id, activity] = this.buildActivity(activityInput, data.name);
+                    activities[id] = activity;
+                }
+                itemData.system.activities = activities;
+            }
+            const created = await actor.createEmbeddedDocuments('Item', [itemData]);
+            const createdItem = created?.[0] ?? null;
+            const itemId = createdItem?.id ?? null;
+            if (!itemId) {
+                return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
+            }
+            return { success: true, itemId, actorId: actor.id };
+        }
+        catch (error) {
+            throw new Error(`addSpellToActor failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     // ===== PHASE 2: WRITE OPERATION HANDLERS =====
