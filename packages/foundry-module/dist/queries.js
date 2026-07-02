@@ -647,15 +647,17 @@ export class QueryHandlers {
             // component tags passed at creation get silently dropped (confirmed 2026-07-02: only the
             // system-derived "mgc" tag survives, none of the caller's vocal/somatic/etc.). Patch it in as
             // a follow-up update, once the item fully exists and its type is settled.
-            // IMPORTANT: calling .update() directly on `createdItem` (the doc returned by
-            // createEmbeddedDocuments) silently no-ops here — confirmed 2026-07-02: the identical update
-            // succeeds when called on the same item fetched fresh via actor.items.get(itemId) from the
-            // console, but not on the just-returned reference. Go through actor.updateEmbeddedDocuments
-            // instead, which is what a fresh actor.items.get(itemId) reference would route through anyway.
+            // IMPORTANT — two prior attempts here both no-op'd silently: calling .update() directly on
+            // `createdItem` (the doc returned by createEmbeddedDocuments), and calling
+            // actor.updateEmbeddedDocuments() with a bare _id. Only fetching a FRESH reference via
+            // actor.items.get(itemId) and calling .update() on THAT reproduces the manual console repro
+            // that actually persisted (confirmed across a hard refresh, 2026-07-02). Do not simplify this
+            // back to createdItem.update() or updateEmbeddedDocuments() without re-testing in console first.
             let warning;
             if (components.length) {
                 try {
-                    await actor.updateEmbeddedDocuments('Item', [{ _id: itemId, 'system.properties': components }]);
+                    const freshItem = actor.items.get(itemId);
+                    await freshItem.update({ 'system.properties': components });
                 }
                 catch (error) {
                     warning = `Item "${data.name}" was created (${itemId}), but setting spell components failed: ${error instanceof Error ? error.message : String(error)}. Check the Components field on the sheet.`;
