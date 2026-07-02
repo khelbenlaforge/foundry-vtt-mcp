@@ -423,6 +423,10 @@ export class ItemImportTools {
       throw new Error(result?.error ?? 'addSpellToActor failed');
     }
 
-    return `Added "${params.name}" to actor's spell list (prepared: ${params.prepared}). Item ID: ${result.itemId}`;
+    const parts = [`Added "${params.name}" to actor's spell list (prepared: ${params.prepared}). Item ID: ${result.itemId}`];
+    if (result.warning) {
+      parts.push(`WARNING: ${result.warning}`);
+    }
+    return parts.join(' ');
   }
 }

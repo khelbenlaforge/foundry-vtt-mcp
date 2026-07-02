@@ -648,7 +648,21 @@ export class QueryHandlers {
             if (!itemId) {
                 return { success: false, error: 'Foundry createEmbeddedDocuments returned no item ID' };
             }
-            return { success: true, itemId, actorId: actor.id };
+            // The properties SetField is validated against CONFIG.DND5E.validProperties[type] during
+            // document clean — at createEmbeddedDocuments time the type isn't reliably resolved yet, so
+            // component tags passed at creation get silently dropped (confirmed 2026-07-02: only the
+            // system-derived "mgc" tag survives, none of the caller's vocal/somatic/etc.). Patch it in as
+            // a follow-up update, once the item fully exists and its type is settled.
+            let warning;
+            if (components.length) {
+                try {
+                    await createdItem.update({ 'system.properties': components });
+                }
+                catch (error) {
+                    warning = `Item "${data.name}" was created (${itemId}), but setting spell components failed: ${error instanceof Error ? error.message : String(error)}. Check the Components field on the sheet.`;
+                }
+            }
+            return { success: true, itemId, actorId: actor.id, ...(warning ? { warning } : {}) };
         }
         catch (error) {
             throw new Error(`addSpellToActor failed: ${error instanceof Error ? error.message : String(error)}`);
