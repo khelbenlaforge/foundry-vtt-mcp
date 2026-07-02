@@ -577,6 +577,16 @@ export class QueryHandlers {
         }
         return { actor };
     }
+    // A cast consumes one spell slot at the spell's own level, scaled up if the player picks a
+    // higher slot (mode: 'level' — dnd5e's own "cast at higher level" behavior). Cantrips (level 0)
+    // consume nothing.
+    applySpellSlotConsumption(activity, level) {
+        if (level <= 0)
+            return;
+        const targets = activity.consumption?.targets ?? [];
+        targets.push({ type: 'spellSlots', target: String(level), value: '1', scaling: { mode: 'level', formula: '' } });
+        activity.consumption = { targets, scaling: { allowed: true, max: '' } };
+    }
     async handleAddSpellToActor(data) {
         try {
             const gmCheck = this.validateGMAccess();
@@ -586,6 +596,7 @@ export class QueryHandlers {
             const { actor, error } = this.resolveActor(data.actorIdentifier);
             if (!actor)
                 return { error, success: false };
+            const components = data.components ?? [];
             const itemData = {
                 name: data.name,
                 type: 'spell',
@@ -603,7 +614,8 @@ export class QueryHandlers {
                     duration: {
                         value: data.duration?.value ?? null,
                         units: data.duration?.units ?? 'inst',
-                        concentration: data.duration?.concentration ?? false,
+                        // "concentration" in components is the authoritative source unless the caller overrides explicitly.
+                        concentration: data.duration?.concentration ?? components.includes('concentration'),
                     },
                     range: {
                         value: data.range?.value ?? null,
@@ -612,13 +624,20 @@ export class QueryHandlers {
                     target: data.target
                         ? { affects: { count: data.target.count, type: data.target.type } }
                         : { affects: {} },
-                    ...(data.ritual ? { properties: ['ritual'] } : {}),
+                    properties: components,
+                    materials: {
+                        value: data.materials?.value ?? '',
+                        consumed: data.materials?.consumed ?? false,
+                        cost: data.materials?.cost ?? 0,
+                        supply: 0,
+                    },
                 },
             };
             if (data.activities?.length) {
                 const activities = {};
                 for (const activityInput of data.activities) {
                     const [id, activity] = this.buildActivity(activityInput, data.name);
+                    this.applySpellSlotConsumption(activity, data.level);
                     activities[id] = activity;
                 }
                 itemData.system.activities = activities;

@@ -10,6 +10,14 @@ const ALLOWED_ACTIVATION_TYPES = ['action', 'bonus', 'reaction', 'minute', 'hour
 const ALLOWED_SPELL_SCHOOLS = ['abj', 'con', 'div', 'enc', 'evo', 'ill', 'nec', 'trs'] as const;
 const ALLOWED_DURATION_UNITS = ['inst', 'turn', 'round', 'minute', 'hour', 'day', 'month', 'year', 'spec', 'perm'] as const;
 const ALLOWED_RANGE_UNITS = ['self', 'touch', 'ft', 'mi', 'spec'] as const;
+// dnd5e CONFIG.DND5E.itemProperties keys valid for spells — V/S/M/C/R
+const ALLOWED_SPELL_COMPONENTS = ['vocal', 'somatic', 'material', 'concentration', 'ritual'] as const;
+
+const materialsSchema = z.object({
+  value: z.string().optional().default(''),
+  consumed: z.boolean().optional().default(false),
+  cost: z.number().nonnegative().optional().default(0),
+});
 const ALLOWED_PASSIVE_TYPES = [
   'attack_bonus_mwak', 'attack_bonus_rwak', 'damage_bonus_mwak', 'damage_bonus_rwak',
   'ability_check_bonus', 'save_bonus', 'skill_check_bonus', 'spell_dc_bonus',
@@ -314,10 +322,23 @@ export class ItemImportTools {
               properties: { count: { type: 'number' }, type: { type: 'string', description: 'e.g. "creature", "object", "self"' } },
             },
             prepared: { type: 'boolean', description: 'Whether the spell is currently prepared. Default: false (added to the list, unprepared).', default: false },
-            ritual: { type: 'boolean', description: 'Whether the spell can be cast as a ritual', default: false },
+            components: {
+              type: 'array',
+              description: `Component tags shown on the spell (V/S/M/C/R). One or more of: ${ALLOWED_SPELL_COMPONENTS.join(', ')}. Include "concentration" if the spell requires Concentration (also drives duration.concentration unless set explicitly) and "ritual" if it's ritual-castable.`,
+              items: { type: 'string' },
+            },
+            materials: {
+              type: 'object',
+              description: 'Required if components includes "material" — the material component, flavor-only or with a real GP cost.',
+              properties: {
+                value: { type: 'string', description: 'Material description, e.g. "a pinch of ash" or "powdered ruby worth 50gp"' },
+                consumed: { type: 'boolean', description: 'Whether the material is consumed on cast', default: false },
+                cost: { type: 'number', description: 'GP cost if the material has one; 0 for flavor-only', default: 0 },
+              },
+            },
             activities: {
               type: 'array',
-              description: 'Same shape as add-item-to-actor activities (attack/damage/save/heal/utility) — omit for a purely narrative/DM-adjudicated spell.',
+              description: 'The spell\'s actual casting roll(s) — same shape as add-item-to-actor activities (attack/save/heal/utility). Use type "attack" with attack.ability: "spellcasting" for a spell attack roll, or type "save" with save.dc: "spellcasting" for a save-DC spell. For a leveled spell (level > 0), the handler automatically adds spell-slot consumption at the spell\'s own level to each activity — do not pass consumption yourself. Omit only for a purely narrative/DM-adjudicated spell with no roll.',
               items: { type: 'object' },
             },
           },
@@ -385,9 +406,13 @@ export class ItemImportTools {
       }).optional(),
       target: z.object({ count: z.number().optional(), type: z.string().optional() }).optional(),
       prepared: z.boolean().optional().default(false),
-      ritual: z.boolean().optional().default(false),
+      components: z.array(z.enum(ALLOWED_SPELL_COMPONENTS)).optional().default([]),
+      materials: materialsSchema.optional(),
       activities: z.array(activitySchema).optional(),
-    });
+    }).refine(
+      (p) => !p.components.includes('material') || !!p.materials,
+      { message: '`materials` is required when components includes "material"' },
+    );
     const params = schema.parse(args);
 
     this.logger.info('Adding spell to actor', { actor: params.actorIdentifier, spell: params.name });

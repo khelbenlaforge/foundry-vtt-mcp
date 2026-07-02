@@ -278,7 +278,8 @@ export declare class ItemImportTools {
                 range?: never;
                 target?: never;
                 prepared?: never;
-                ritual?: never;
+                components?: never;
+                materials?: never;
             };
             required: string[];
         };
@@ -370,10 +371,32 @@ export declare class ItemImportTools {
                     description: string;
                     default: boolean;
                 };
-                ritual: {
+                components: {
                     type: string;
                     description: string;
-                    default: boolean;
+                    items: {
+                        type: string;
+                    };
+                };
+                materials: {
+                    type: string;
+                    description: string;
+                    properties: {
+                        value: {
+                            type: string;
+                            description: string;
+                        };
+                        consumed: {
+                            type: string;
+                            description: string;
+                            default: boolean;
+                        };
+                        cost: {
+                            type: string;
+                            description: string;
+                            default: number;
+                        };
+                    };
                 };
                 activities: {
                     type: string;
