@@ -690,16 +690,6 @@ export class QueryHandlers {
     return { actor };
   }
 
-  // A cast consumes one spell slot at the spell's own level, scaled up if the player picks a
-  // higher slot (mode: 'level' — dnd5e's own "cast at higher level" behavior). Cantrips (level 0)
-  // consume nothing.
-  private applySpellSlotConsumption(activity: Record<string, any>, level: number): void {
-    if (level <= 0) return;
-    const targets = activity.consumption?.targets ?? [];
-    targets.push({ type: 'spellSlots', target: String(level), value: '1', scaling: { mode: 'level', formula: '' } });
-    activity.consumption = { targets, scaling: { allowed: true, max: '' } };
-  }
-
   private async handleAddSpellToActor(data: {
     actorIdentifier: string;
     name: string;
@@ -763,11 +753,15 @@ export class QueryHandlers {
         },
       };
 
+      // Spell-slot consumption for cast activities needs no manual wiring: dnd5e's Activity schema
+      // defaults consumption.spellSlot to true and requiresSpellSlot is derived automatically from
+      // the parent item being a leveled spell (confirmed 2026-07-02 against a real compendium spell's
+      // consumption dump: {spellSlot: true, targets: []} — empty targets, no scaling override).
+      // Adding an explicit "spellSlots" consumption target on top of that duplicated the checkbox.
       if (data.activities?.length) {
         const activities: Record<string, any> = {};
         for (const activityInput of data.activities) {
           const [id, activity] = this.buildActivity(activityInput, data.name);
-          this.applySpellSlotConsumption(activity, data.level);
           activities[id] = activity;
         }
         itemData.system.activities = activities;
