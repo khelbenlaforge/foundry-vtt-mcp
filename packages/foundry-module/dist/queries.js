@@ -647,10 +647,15 @@ export class QueryHandlers {
             // component tags passed at creation get silently dropped (confirmed 2026-07-02: only the
             // system-derived "mgc" tag survives, none of the caller's vocal/somatic/etc.). Patch it in as
             // a follow-up update, once the item fully exists and its type is settled.
+            // IMPORTANT: calling .update() directly on `createdItem` (the doc returned by
+            // createEmbeddedDocuments) silently no-ops here — confirmed 2026-07-02: the identical update
+            // succeeds when called on the same item fetched fresh via actor.items.get(itemId) from the
+            // console, but not on the just-returned reference. Go through actor.updateEmbeddedDocuments
+            // instead, which is what a fresh actor.items.get(itemId) reference would route through anyway.
             let warning;
             if (components.length) {
                 try {
-                    await createdItem.update({ 'system.properties': components });
+                    await actor.updateEmbeddedDocuments('Item', [{ _id: itemId, 'system.properties': components }]);
                 }
                 catch (error) {
                     warning = `Item "${data.name}" was created (${itemId}), but setting spell components failed: ${error instanceof Error ? error.message : String(error)}. Check the Components field on the sheet.`;
