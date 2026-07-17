@@ -830,6 +830,99 @@ export declare class FoundryDataAccess {
         total: number;
     }>;
     /**
+     * Add one or more freshly-authored Item documents to an existing Actor.
+     */
+    addActorItems(params: {
+        actorIdentifier: string;
+        items: Array<{
+            name: string;
+            type: string;
+            img?: string;
+            system?: Record<string, any>;
+        }>;
+    }): Promise<{
+        actorId: string;
+        actorName: string;
+        created: Array<{
+            id: string;
+            name: string;
+            type: string;
+        }>;
+    }>;
+    /**
+     * Remove embedded Items from an existing Actor.
+     */
+    removeActorItems(params: {
+        actorIdentifier: string;
+        itemIds?: string[];
+        itemNames?: string[];
+        type?: string;
+    }): Promise<{
+        actorId: string;
+        actorName: string;
+        removed: Array<{
+            id: string;
+            name: string;
+            type: string;
+        }>;
+        notFound: string[];
+    }>;
+    /**
+     * List world-level Item documents from the Items sidebar.
+     */
+    listWorldItems(params: {
+        type?: string;
+        folder?: string;
+        nameFilter?: string;
+    }): Promise<Array<{
+        id: string;
+        name: string;
+        type: string;
+        img?: string;
+        folderId: string | null;
+        folderName: string | null;
+    }>>;
+    /**
+     * Update one or more existing world-level Item documents.
+     */
+    updateWorldItems(params: {
+        updates: Array<{
+            id: string;
+            name?: string;
+            img?: string;
+            system?: Record<string, any>;
+            folder?: string;
+        }>;
+    }): Promise<{
+        updated: Array<{
+            id: string;
+            name: string;
+            type: string;
+        }>;
+    }>;
+    /**
+     * Create one or more world-level Item documents.
+     */
+    createWorldItems(params: {
+        items: Array<{
+            name: string;
+            type: string;
+            img?: string;
+            system?: Record<string, any>;
+            effects?: any[];
+            flags?: Record<string, any>;
+        }>;
+        folder?: string;
+    }): Promise<{
+        folderId: string | null;
+        folderName: string | null;
+        created: Array<{
+            id: string;
+            name: string;
+            type: string;
+        }>;
+    }>;
+    /**
      * Delete one or more actors by ID.
      */
     deleteActors(ids: string[]): Promise<{

@@ -229,5 +229,10 @@ export declare class QueryHandlers {
     private handleDeleteActors;
     private handleUpdateActorItems;
     private handleDeleteActorItems;
+    private handleAddActorItems;
+    private handleRemoveActorItems;
+    private handleCreateWorldItems;
+    private handleListWorldItems;
+    private handleUpdateWorldItems;
 }
 //# sourceMappingURL=queries.d.ts.map

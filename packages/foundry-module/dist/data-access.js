@@ -4852,6 +4852,286 @@ export class FoundryDataAccess {
         }
     }
     /**
+     * Add one or more freshly-authored Item documents to an existing Actor.
+     */
+    async addActorItems(params) {
+        this.validateFoundryState();
+        const { actorIdentifier, items } = params;
+        if (!actorIdentifier) {
+            throw new Error('actorIdentifier is required');
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new Error('items array is required and must contain at least one entry');
+        }
+        const actor = this.findActorByIdentifier(actorIdentifier);
+        if (!actor) {
+            throw new Error(`Actor not found: ${actorIdentifier}`);
+        }
+        const itemDocTypes = game.system?.documentTypes?.Item;
+        const validTypes = itemDocTypes && typeof itemDocTypes === 'object' ? Object.keys(itemDocTypes) : null;
+        const payload = items.map((it, idx) => {
+            if (!it || typeof it.name !== 'string' || it.name.trim().length === 0) {
+                throw new Error(`items[${idx}]: "name" is required and must be a non-empty string`);
+            }
+            if (typeof it.type !== 'string' || it.type.trim().length === 0) {
+                throw new Error(`items[${idx}] ("${it.name}"): "type" is required`);
+            }
+            if (validTypes && !validTypes.includes(it.type)) {
+                throw new Error(`items[${idx}] ("${it.name}"): unknown type "${it.type}" for system "${game.system?.id}". ` +
+                    `Valid Item types: ${validTypes.join(', ')}`);
+            }
+            const doc = { name: it.name, type: it.type };
+            if (it.img)
+                doc.img = it.img;
+            if (it.system && typeof it.system === 'object')
+                doc.system = it.system;
+            return doc;
+        });
+        try {
+            const created = await actor.createEmbeddedDocuments('Item', payload);
+            const result = {
+                actorId: actor.id,
+                actorName: actor.name,
+                created: (created || []).map((doc) => ({
+                    id: doc.id,
+                    name: doc.name,
+                    type: doc.type,
+                })),
+            };
+            this.auditLog('addActorItems', { actorIdentifier, actorId: actor.id, count: payload.length }, 'success');
+            return result;
+        }
+        catch (error) {
+            this.auditLog('addActorItems', { actorIdentifier, actorId: actor.id, count: payload.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Remove embedded Items from an existing Actor.
+     */
+    async removeActorItems(params) {
+        this.validateFoundryState();
+        const { actorIdentifier, itemIds, itemNames, type } = params;
+        if (!actorIdentifier) {
+            throw new Error('actorIdentifier is required');
+        }
+        const hasIds = Array.isArray(itemIds) && itemIds.length > 0;
+        const hasNames = Array.isArray(itemNames) && itemNames.length > 0;
+        if (!hasIds && !hasNames) {
+            throw new Error('Provide itemIds and/or itemNames identifying the items to remove');
+        }
+        const actor = this.findActorByIdentifier(actorIdentifier);
+        if (!actor) {
+            throw new Error(`Actor not found: ${actorIdentifier}`);
+        }
+        const typeLower = type?.toLowerCase();
+        const toDelete = new Map();
+        const notFound = [];
+        if (hasIds) {
+            for (const id of itemIds) {
+                const item = actor.items.get(id);
+                if (item)
+                    toDelete.set(item.id, item);
+                else
+                    notFound.push(id);
+            }
+        }
+        if (hasNames) {
+            for (const name of itemNames) {
+                const nameLower = name.toLowerCase();
+                const item = actor.items.find((i) => i.name?.toLowerCase() === nameLower && (!typeLower || i.type === typeLower));
+                if (item)
+                    toDelete.set(item.id, item);
+                else
+                    notFound.push(name);
+            }
+        }
+        if (toDelete.size === 0) {
+            return { actorId: actor.id, actorName: actor.name, removed: [], notFound };
+        }
+        const removed = Array.from(toDelete.values()).map((i) => ({
+            id: i.id,
+            name: i.name,
+            type: i.type,
+        }));
+        try {
+            await actor.deleteEmbeddedDocuments('Item', removed.map(r => r.id));
+            this.auditLog('removeActorItems', { actorIdentifier, actorId: actor.id, count: removed.length }, 'success');
+            return { actorId: actor.id, actorName: actor.name, removed, notFound };
+        }
+        catch (error) {
+            this.auditLog('removeActorItems', { actorIdentifier, actorId: actor.id, count: removed.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * List world-level Item documents from the Items sidebar.
+     */
+    async listWorldItems(params) {
+        this.validateFoundryState();
+        const { type, folder, nameFilter } = params;
+        const nameLower = nameFilter ? nameFilter.toLowerCase() : null;
+        let folderId = null;
+        if (folder && folder.trim().length > 0) {
+            const folderTrimmed = folder.trim();
+            const folderDoc = game.folders?.find((f) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)) ?? null;
+            if (!folderDoc) {
+                return [];
+            }
+            folderId = folderDoc.id;
+        }
+        const result = [];
+        for (const item of game.items) {
+            if (type && item.type !== type)
+                continue;
+            if (folderId && item.folder?.id !== folderId)
+                continue;
+            if (nameLower && !(item.name ?? '').toLowerCase().includes(nameLower))
+                continue;
+            result.push({
+                id: item.id ?? '',
+                name: item.name ?? '',
+                type: item.type,
+                ...(item.img ? { img: item.img } : {}),
+                folderId: item.folder?.id ?? null,
+                folderName: item.folder?.name ?? null,
+            });
+        }
+        return result;
+    }
+    /**
+     * Update one or more existing world-level Item documents.
+     */
+    async updateWorldItems(params) {
+        this.validateFoundryState();
+        const { updates } = params;
+        if (!Array.isArray(updates) || updates.length === 0) {
+            throw new Error('updates array is required and must contain at least one entry');
+        }
+        const folderCache = new Map();
+        const resolveFolderId = async (folder) => {
+            if (folderCache.has(folder))
+                return folderCache.get(folder);
+            const folderTrimmed = folder.trim();
+            let folderDoc = game.folders?.find((f) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)) ?? null;
+            if (!folderDoc) {
+                folderDoc = await Folder.create({
+                    name: folderTrimmed,
+                    type: 'Item',
+                    parent: null,
+                });
+            }
+            folderCache.set(folder, folderDoc.id);
+            return folderDoc.id;
+        };
+        const payload = [];
+        for (let idx = 0; idx < updates.length; idx++) {
+            const upd = updates[idx];
+            if (!upd || typeof upd.id !== 'string' || upd.id.trim().length === 0) {
+                throw new Error(`updates[${idx}]: "id" is required and must be a non-empty string`);
+            }
+            const item = game.items?.get(upd.id);
+            if (!item) {
+                throw new Error(`updates[${idx}]: Item "${upd.id}" not found in world`);
+            }
+            const patch = { _id: upd.id };
+            if (upd.name !== undefined)
+                patch.name = upd.name;
+            if (upd.img !== undefined)
+                patch.img = upd.img;
+            if (upd.system !== undefined)
+                patch.system = upd.system;
+            if (upd.folder !== undefined && upd.folder.trim().length > 0) {
+                patch.folder = await resolveFolderId(upd.folder.trim());
+            }
+            payload.push(patch);
+        }
+        try {
+            const updated = await Item.updateDocuments(payload);
+            const result = {
+                updated: (updated || []).map((doc) => ({
+                    id: doc.id,
+                    name: doc.name,
+                    type: doc.type,
+                })),
+            };
+            this.auditLog('updateWorldItems', { count: payload.length }, 'success');
+            return result;
+        }
+        catch (error) {
+            this.auditLog('updateWorldItems', { count: payload.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Create one or more world-level Item documents.
+     */
+    async createWorldItems(params) {
+        this.validateFoundryState();
+        const { items, folder } = params;
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new Error('items array is required and must contain at least one entry');
+        }
+        const itemDocTypes = game.system?.documentTypes?.Item;
+        const validTypes = itemDocTypes && typeof itemDocTypes === 'object' ? Object.keys(itemDocTypes) : null;
+        const payload = items.map((it, idx) => {
+            if (!it || typeof it.name !== 'string' || it.name.trim().length === 0) {
+                throw new Error(`items[${idx}]: "name" is required and must be a non-empty string`);
+            }
+            if (typeof it.type !== 'string' || it.type.trim().length === 0) {
+                throw new Error(`items[${idx}] ("${it.name}"): "type" is required`);
+            }
+            if (validTypes && !validTypes.includes(it.type)) {
+                throw new Error(`items[${idx}] ("${it.name}"): unknown type "${it.type}" for system "${game.system?.id}". ` +
+                    `Valid Item types: ${validTypes.join(', ')}`);
+            }
+            const doc = { name: it.name, type: it.type };
+            if (it.img)
+                doc.img = it.img;
+            if (it.system && typeof it.system === 'object')
+                doc.system = it.system;
+            if (Array.isArray(it.effects))
+                doc.effects = it.effects;
+            if (it.flags && typeof it.flags === 'object')
+                doc.flags = it.flags;
+            return doc;
+        });
+        let folderDoc = null;
+        if (folder && folder.trim().length > 0) {
+            const folderTrimmed = folder.trim();
+            folderDoc =
+                game.folders?.find((f) => f.type === 'Item' && (f.name === folderTrimmed || f.id === folderTrimmed)) ?? null;
+            if (!folderDoc) {
+                folderDoc = await Folder.create({
+                    name: folderTrimmed,
+                    type: 'Item',
+                    parent: null,
+                });
+            }
+            for (const doc of payload) {
+                doc.folder = folderDoc.id;
+            }
+        }
+        try {
+            const created = await Item.createDocuments(payload);
+            const result = {
+                folderId: folderDoc ? folderDoc.id : null,
+                folderName: folderDoc ? folderDoc.name : null,
+                created: (created || []).map((doc) => ({
+                    id: doc.id,
+                    name: doc.name,
+                    type: doc.type,
+                })),
+            };
+            this.auditLog('createWorldItems', { folder: folder ?? null, count: payload.length }, 'success');
+            return result;
+        }
+        catch (error) {
+            this.auditLog('createWorldItems', { folder: folder ?? null, count: payload.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
      * Delete one or more actors by ID.
      */
     async deleteActors(ids) {

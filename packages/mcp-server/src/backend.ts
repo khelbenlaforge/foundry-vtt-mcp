@@ -22,6 +22,7 @@ import { SceneTools } from './tools/scene.js';
 
 import { ActorCreationTools } from './tools/actor-creation.js';
 import { ActorManagementTools } from './tools/actor-management.js';
+import { WorldItemsTools } from './tools/world-items.js';
 
 import { CreatureImportTools } from './tools/creature-import.js';
 import { ItemImportTools } from './tools/item-import.js';
@@ -1070,6 +1071,7 @@ async function startBackend(): Promise<void> {
 
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
   const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
+  const worldItemsTools = new WorldItemsTools({ foundryClient, logger });
 
   const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
   const itemImportTools = new ItemImportTools({ foundryClient, logger });
@@ -1305,6 +1307,7 @@ async function startBackend(): Promise<void> {
 
     ...actorCreationTools.getToolDefinitions(),
     ...actorManagementTools.getToolDefinitions(),
+    ...worldItemsTools.getToolDefinitions(),
 
     ...creatureImportTools.getToolDefinitions(),
 
@@ -1504,6 +1507,12 @@ async function startBackend(): Promise<void> {
                 case 'manage-actors':
 
                   result = await actorManagementTools.handleManageActors(args);
+
+                  break;
+
+                case 'manage-world-items':
+
+                  result = await worldItemsTools.handleManageWorldItems(args);
 
                   break;
 
