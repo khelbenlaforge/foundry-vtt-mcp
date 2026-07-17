@@ -1191,10 +1191,15 @@ export class FoundryDataAccess {
                 // reference on some documents — normalize to an id/identifier string
                 // so it's never used as a record key directly (which would silently
                 // stringify to "[object Object]" and break the class lookup below).
+                // sourceClass (the pre-5.3 fallback) is a deprecated getter -- read it
+                // from _source, never live, or it fires a compatibility warning per
+                // spell that lacks sourceItem (confirmed via console: 12 warnings on
+                // a single getCharacterInfo call for an actor with unlinked spells).
+                const spellRaw = spell._source?.system;
                 const sourceItem = spellSystem?.sourceItem;
                 const sourceClass = (sourceItem
                     ? (typeof sourceItem === 'string' ? sourceItem : (sourceItem.identifier || sourceItem.id))
-                    : spellSystem?.sourceClass) || 'general';
+                    : spellRaw?.sourceClass) || 'general';
                 if (!spellsByClass[sourceClass]) {
                     spellsByClass[sourceClass] = [];
                 }
