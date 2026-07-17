@@ -79,6 +79,13 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.findPlayers`] = this.handleFindPlayers.bind(this);
     CONFIG.queries[`${modulePrefix}.findActor`] = this.handleFindActor.bind(this);
 
+    // Generic actor CRUD (any actor type — create/update/delete actors and embedded items)
+    CONFIG.queries[`${modulePrefix}.createActors`] = this.handleCreateActors.bind(this);
+    CONFIG.queries[`${modulePrefix}.updateActors`] = this.handleUpdateActors.bind(this);
+    CONFIG.queries[`${modulePrefix}.deleteActors`] = this.handleDeleteActors.bind(this);
+    CONFIG.queries[`${modulePrefix}.updateActorItems`] = this.handleUpdateActorItems.bind(this);
+    CONFIG.queries[`${modulePrefix}.deleteActorItems`] = this.handleDeleteActorItems.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -1827,6 +1834,120 @@ export class QueryHandlers {
       });
     } catch (error) {
       throw new Error(`Failed to search character items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // ─── Generic actor CRUD ─────────────────────────────────────────────────────
+
+  private async handleCreateActors(data: {
+    actors: Array<{ name: string; type: string; img?: string; system?: Record<string, any> }>;
+    folder?: string;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!Array.isArray(data?.actors) || data.actors.length === 0) {
+        throw new Error('actors array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.createActors(data);
+    } catch (error) {
+      throw new Error(`Failed to create actors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleUpdateActors(data: {
+    updates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!Array.isArray(data?.updates) || data.updates.length === 0) {
+        throw new Error('updates array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.updateActors(data.updates);
+    } catch (error) {
+      throw new Error(`Failed to update actors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleDeleteActors(data: { ids: string[] }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!Array.isArray(data?.ids) || data.ids.length === 0) {
+        throw new Error('ids array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.deleteActors(data.ids);
+    } catch (error) {
+      throw new Error(`Failed to delete actors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleUpdateActorItems(data: {
+    actorIdentifier: string;
+    itemUpdates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+      if (!Array.isArray(data?.itemUpdates) || data.itemUpdates.length === 0) {
+        throw new Error('itemUpdates array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.updateActorItems(data.actorIdentifier, data.itemUpdates);
+    } catch (error) {
+      throw new Error(`Failed to update actor items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleDeleteActorItems(data: {
+    actorIdentifier: string;
+    itemIds: string[];
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data?.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+      if (!Array.isArray(data?.itemIds) || data.itemIds.length === 0) {
+        throw new Error('itemIds array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.deleteActorItems(data.actorIdentifier, data.itemIds);
+    } catch (error) {
+      throw new Error(`Failed to delete actor items: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

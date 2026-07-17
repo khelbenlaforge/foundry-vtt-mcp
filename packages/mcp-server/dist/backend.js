@@ -10,6 +10,7 @@ import { CharacterTools } from './tools/character.js';
 import { CompendiumTools } from './tools/compendium.js';
 import { SceneTools } from './tools/scene.js';
 import { ActorCreationTools } from './tools/actor-creation.js';
+import { ActorManagementTools } from './tools/actor-management.js';
 import { CreatureImportTools } from './tools/creature-import.js';
 import { ItemImportTools } from './tools/item-import.js';
 import { QuestCreationTools } from './tools/quest-creation.js';
@@ -769,6 +770,7 @@ async function startBackend() {
     const compendiumTools = new CompendiumTools({ foundryClient, logger, systemRegistry });
     const sceneTools = new SceneTools({ foundryClient, logger });
     const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
+    const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
     const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
     const itemImportTools = new ItemImportTools({ foundryClient, logger });
     const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
@@ -917,6 +919,7 @@ async function startBackend() {
         ...compendiumTools.getToolDefinitions(),
         ...sceneTools.getToolDefinitions(),
         ...actorCreationTools.getToolDefinitions(),
+        ...actorManagementTools.getToolDefinitions(),
         ...creatureImportTools.getToolDefinitions(),
         ...dsa5CharacterCreator.getToolDefinitions(),
         ...questCreationTools.getToolDefinitions(),
@@ -1016,6 +1019,9 @@ async function startBackend() {
                                     break;
                                 case 'get-compendium-entry-full':
                                     result = await actorCreationTools.handleGetCompendiumEntryFull(args);
+                                    break;
+                                case 'manage-actors':
+                                    result = await actorManagementTools.handleManageActors(args);
                                     break;
                                 // DSA5 character creation tools
                                 case 'create-dsa5-character-from-archetype':

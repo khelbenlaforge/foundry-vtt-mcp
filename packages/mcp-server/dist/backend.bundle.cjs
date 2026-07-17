@@ -103531,7 +103531,7 @@ var FoundryConnector = class {
       const timeout = setTimeout(() => {
         this.pendingQueries.delete(queryId);
         reject(new Error(`Query timeout: ${method}`));
-      }, 1e4);
+      }, 6e4);
       this.pendingQueries.set(queryId, { resolve, reject, timeout });
       const message = {
         type: "mcp-query",
@@ -106028,6 +106028,216 @@ var ActorCreationTools = class {
       },
       message: summary + "\n\n" + details + sceneInfo + errorInfo
     };
+  }
+};
+
+// dist/tools/actor-management.js
+init_zod();
+var ActorManagementTools = class {
+  foundryClient;
+  logger;
+  errorHandler;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "ActorManagementTools" });
+    this.errorHandler = new ErrorHandler(this.logger);
+  }
+  /**
+   * Tool definitions for generic actor management operations
+   */
+  getToolDefinitions() {
+    return [
+      {
+        name: "manage-actors",
+        description: `Create, update, or delete actors, and update or delete items embedded on an actor. Use action to select the operation: "create" (new actors), "update" (patch existing actors' name/img/system fields), "delete" (remove actors entirely), "update-items" (patch embedded item fields), or "delete-items" (remove embedded items from an actor). For "update"/"update-items", system field patches are merged into the existing data \u2014 omitted fields are left untouched. Dot-notation system keys (e.g. "attributes.hp.-=temp") are supported and honour Foundry's "-=" deletion operator at any depth.`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["create", "update", "delete", "update-items", "delete-items"],
+              description: "Which CRUD operation to perform"
+            },
+            actors: {
+              type: "array",
+              description: 'Actors to create (action: "create")',
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string", description: 'Foundry actor type, e.g. "character" or "npc"' },
+                  img: { type: "string" },
+                  system: { type: "object", description: "System-specific data for the actor" }
+                },
+                required: ["name", "type"]
+              }
+            },
+            folder: {
+              type: "string",
+              description: 'Folder name to create actors in (action: "create", default "Foundry MCP Actors")'
+            },
+            updates: {
+              type: "array",
+              description: 'Actor patches to apply (action: "update")',
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  name: { type: "string" },
+                  img: { type: "string" },
+                  system: { type: "object" }
+                },
+                required: ["id"]
+              }
+            },
+            ids: {
+              type: "array",
+              items: { type: "string" },
+              description: 'Actor IDs to delete (action: "delete")'
+            },
+            actorIdentifier: {
+              type: "string",
+              description: 'Actor ID or name that owns the items being updated/deleted (action: "update-items"/"delete-items")'
+            },
+            itemUpdates: {
+              type: "array",
+              description: 'Embedded item patches to apply (action: "update-items")',
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  name: { type: "string" },
+                  img: { type: "string" },
+                  system: { type: "object" }
+                },
+                required: ["id"]
+              }
+            },
+            itemIds: {
+              type: "array",
+              items: { type: "string" },
+              description: 'Embedded item IDs to delete (action: "delete-items")'
+            }
+          },
+          required: ["action"]
+        }
+      }
+    ];
+  }
+  /**
+   * Dispatch a manage-actors call to the appropriate handler based on args.action
+   */
+  async handleManageActors(args) {
+    const action = args?.action;
+    switch (action) {
+      case "create":
+        return this.handleCreate(args);
+      case "update":
+        return this.handleUpdate(args);
+      case "delete":
+        return this.handleDelete(args);
+      case "update-items":
+        return this.handleUpdateItems(args);
+      case "delete-items":
+        return this.handleDeleteItems(args);
+      default:
+        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, update, delete, update-items, delete-items`);
+    }
+  }
+  // ── create ───────────────────────────────────────────────────────────────
+  async handleCreate(args) {
+    const schema2 = external_exports.object({
+      actors: external_exports.array(external_exports.object({
+        name: external_exports.string().min(1),
+        type: external_exports.string().min(1),
+        img: external_exports.string().optional(),
+        system: external_exports.record(external_exports.any()).optional()
+      })).min(1),
+      folder: external_exports.string().optional()
+    });
+    const { actors, folder } = schema2.parse(args);
+    this.logger.info("Creating actors", { count: actors.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.createActors", { actors, folder });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (create)", "actor creation");
+    }
+  }
+  // ── update ───────────────────────────────────────────────────────────────
+  async handleUpdate(args) {
+    const schema2 = external_exports.object({
+      updates: external_exports.array(external_exports.object({
+        id: external_exports.string().min(1),
+        name: external_exports.string().optional(),
+        img: external_exports.string().optional(),
+        system: external_exports.record(external_exports.any()).optional()
+      })).min(1)
+    });
+    const { updates } = schema2.parse(args);
+    this.logger.info("Updating actors", { count: updates.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.updateActors", { updates });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (update)", "actor update");
+    }
+  }
+  // ── delete ───────────────────────────────────────────────────────────────
+  async handleDelete(args) {
+    const schema2 = external_exports.object({
+      ids: external_exports.array(external_exports.string().min(1)).min(1)
+    });
+    const { ids } = schema2.parse(args);
+    this.logger.info("Deleting actors", { count: ids.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.deleteActors", { ids });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (delete)", "actor deletion");
+    }
+  }
+  // ── update-items ─────────────────────────────────────────────────────────
+  async handleUpdateItems(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      itemUpdates: external_exports.array(external_exports.object({
+        id: external_exports.string().min(1),
+        name: external_exports.string().optional(),
+        img: external_exports.string().optional(),
+        system: external_exports.record(external_exports.any()).optional()
+      })).min(1)
+    });
+    const { actorIdentifier, itemUpdates } = schema2.parse(args);
+    this.logger.info("Updating actor embedded items", {
+      actorIdentifier,
+      count: itemUpdates.length
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.updateActorItems", {
+        actorIdentifier,
+        itemUpdates
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (update-items)", "actor item update");
+    }
+  }
+  // ── delete-items ─────────────────────────────────────────────────────────
+  async handleDeleteItems(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      itemIds: external_exports.array(external_exports.string().min(1)).min(1)
+    });
+    const { actorIdentifier, itemIds } = schema2.parse(args);
+    this.logger.info("Deleting actor embedded items", {
+      actorIdentifier,
+      count: itemIds.length
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.deleteActorItems", {
+        actorIdentifier,
+        itemIds
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (delete-items)", "actor item deletion");
+    }
   }
 };
 
@@ -108941,6 +109151,104 @@ init_zod();
 var ALLOWED_ITEM_TYPES = ["feat", "equipment", "consumable", "weapon", "loot"];
 var ALLOWED_ITEM_RARITIES = ["common", "uncommon", "rare", "veryRare", "legendary", "artifact", "unique"];
 var ALLOWED_RECOVERY_PERIODS = ["lr", "sr", "day"];
+var ALLOWED_ACTIVITY_TYPES = ["attack", "damage", "save", "heal", "utility"];
+var ALLOWED_ACTIVATION_TYPES = ["action", "bonus", "reaction", "minute", "hour", "special", ""];
+var ALLOWED_SPELL_SCHOOLS = ["abj", "con", "div", "enc", "evo", "ill", "nec", "trs"];
+var ALLOWED_DURATION_UNITS = ["inst", "turn", "round", "minute", "hour", "day", "month", "year", "spec", "perm"];
+var ALLOWED_RANGE_UNITS = ["self", "touch", "ft", "mi", "spec"];
+var ALLOWED_SPELL_COMPONENTS = ["vocal", "somatic", "material", "concentration", "ritual"];
+var materialsSchema = external_exports.object({
+  value: external_exports.string().optional().default(""),
+  consumed: external_exports.boolean().optional().default(false),
+  cost: external_exports.number().nonnegative().optional().default(0)
+});
+var ALLOWED_PASSIVE_TYPES = [
+  "attack_bonus_mwak",
+  "attack_bonus_rwak",
+  "damage_bonus_mwak",
+  "damage_bonus_rwak",
+  "ability_check_bonus",
+  "save_bonus",
+  "skill_check_bonus",
+  "spell_dc_bonus",
+  "skill_proficiency",
+  "skill_expertise",
+  "damage_resistance",
+  "damage_immunity",
+  "damage_vulnerability",
+  "condition_immunity",
+  "language",
+  "size",
+  "movement_speed",
+  "movement_hover",
+  "sense_range",
+  "hp_bonus_flat",
+  "hp_bonus_per_level",
+  "ac_formula",
+  "initiative_advantage",
+  "reroll_ones",
+  "reroll_lowest_advantage",
+  "crit_threshold",
+  "crit_extra_dice"
+];
+var usesSchema = external_exports.object({
+  value: external_exports.number().int().nonnegative().finite(),
+  max: external_exports.number().int().nonnegative().finite(),
+  recovery: external_exports.enum(ALLOWED_RECOVERY_PERIODS)
+}).refine((uses) => uses.value <= uses.max, {
+  message: "uses.value must be less than or equal to uses.max"
+});
+var damagePartSchema = external_exports.object({
+  number: external_exports.number().int().positive(),
+  denomination: external_exports.number().int().nonnegative(),
+  bonus: external_exports.string().optional().default(""),
+  types: external_exports.array(external_exports.string()).min(1)
+});
+var healingSchema = damagePartSchema.omit({ types: true }).extend({
+  types: external_exports.array(external_exports.string()).optional().default([])
+});
+var activitySchema = external_exports.object({
+  type: external_exports.enum(ALLOWED_ACTIVITY_TYPES),
+  name: external_exports.string(),
+  activation: external_exports.object({
+    type: external_exports.enum(ALLOWED_ACTIVATION_TYPES).optional().default("action"),
+    value: external_exports.number().int().positive().optional()
+  }).optional().default({ type: "action" }),
+  description: external_exports.string().optional().default(""),
+  range: external_exports.object({ value: external_exports.number().optional(), units: external_exports.string().optional() }).optional(),
+  target: external_exports.object({ count: external_exports.union([external_exports.string(), external_exports.number()]).optional(), type: external_exports.string().optional() }).optional(),
+  uses: usesSchema.optional(),
+  attack: external_exports.object({
+    ability: external_exports.enum(["str", "dex", "spellcasting", "none", ""]).optional().default(""),
+    bonus: external_exports.string().optional().default(""),
+    attackType: external_exports.enum(["melee", "ranged"]).optional().default("melee"),
+    classification: external_exports.enum(["weapon", "spell", "unarmed"]).optional().default("weapon")
+  }).optional(),
+  save: external_exports.object({
+    ability: external_exports.array(external_exports.string()).min(1),
+    dc: external_exports.union([external_exports.number(), external_exports.string()]),
+    onSave: external_exports.enum(["half", "none", "full"]).optional().default("half")
+  }).optional(),
+  damageParts: external_exports.array(damagePartSchema).optional(),
+  healing: healingSchema.optional(),
+  roll: external_exports.object({ formula: external_exports.string(), name: external_exports.string().optional() }).optional()
+}).refine((a) => a.type !== "attack" || !!a.attack, { message: "attack activities require an `attack` block" }).refine((a) => a.type !== "save" || !!a.save, { message: "save activities require a `save` block" }).refine((a) => a.type !== "heal" || !!a.healing, { message: "heal activities require a `healing` block" }).refine((a) => a.type !== "utility" || !!a.roll, { message: "utility activities require a `roll` block" }).refine((a) => a.type !== "damage" || !!a.damageParts?.length, { message: "damage activities require `damageParts`" });
+var PASSIVE_TYPES_REQUIRING_TARGET = [
+  "skill_proficiency",
+  "skill_expertise",
+  "sense_range",
+  "movement_speed"
+];
+var passiveEffectSchema = external_exports.object({
+  name: external_exports.string(),
+  passiveType: external_exports.enum(ALLOWED_PASSIVE_TYPES),
+  value: external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean()]),
+  target: external_exports.string().optional()
+}).refine((p) => !PASSIVE_TYPES_REQUIRING_TARGET.includes(p.passiveType) || !!p.target, { message: `\`target\` is required for passiveType in: ${PASSIVE_TYPES_REQUIRING_TARGET.join(", ")}` });
+var inertAbilitySchema = external_exports.object({
+  name: external_exports.string(),
+  description: external_exports.string()
+});
 var ItemImportTools = class {
   foundryClient;
   logger;
@@ -108994,9 +109302,191 @@ var ItemImportTools = class {
             rarity: {
               type: "string",
               description: 'Item rarity: "common", "uncommon", "rare", "veryRare", "legendary", "artifact", "unique"'
+            },
+            requiresAttunement: {
+              type: "boolean",
+              description: 'Whether the item requires attunement (per its actual rules text \u2014 do not infer from rarity). Default: false. Only meaningful for "equipment"/"weapon" items carrying `passiveEffects`.',
+              default: false
+            },
+            equipped: {
+              type: "boolean",
+              description: 'Explicitly mark the item equipped/unequipped. If omitted, defaults to true when the item is "equipment"/"weapon" and carries `passiveEffects` (since transfer effects are suppressed on unequipped gear) \u2014 set explicitly to false to import a stash/reserve item unequipped (its passives won\'t apply until equipped in Foundry).'
+            },
+            activities: {
+              type: "array",
+              description: "Rollable abilities (attack/damage/save/heal/utility) \u2014 become real dnd5e Activities with buttons in the Actions tab. Each activity may carry its own independent `uses` (value/max/recovery), separate from the item-level `uses`.",
+              items: {
+                type: "object",
+                properties: {
+                  type: { type: "string", description: '"attack" | "damage" | "save" | "heal" | "utility"' },
+                  name: { type: "string", description: 'Ability name \u2014 handler prefixes with "<Item Name>: "' },
+                  activation: {
+                    type: "object",
+                    properties: {
+                      type: { type: "string", description: '"action" | "bonus" | "reaction" | "minute" | "hour" | "special" | ""' },
+                      value: { type: "number" }
+                    }
+                  },
+                  description: { type: "string" },
+                  range: { type: "object", properties: { value: { type: "number" }, units: { type: "string" } } },
+                  target: { type: "object", properties: { count: {}, type: { type: "string" } } },
+                  uses: {
+                    type: "object",
+                    description: "Per-activity limited uses, independent of item-level uses",
+                    properties: {
+                      value: { type: "number" },
+                      max: { type: "number" },
+                      recovery: { type: "string", description: '"lr" | "sr" | "day"' }
+                    }
+                  },
+                  attack: {
+                    type: "object",
+                    description: 'Required when type is "attack"',
+                    properties: {
+                      ability: { type: "string", description: '"str" | "dex" | "spellcasting" | "none" | ""' },
+                      bonus: { type: "string" },
+                      attackType: { type: "string", description: '"melee" | "ranged"' },
+                      classification: { type: "string", description: '"weapon" | "spell" | "unarmed"' }
+                    }
+                  },
+                  save: {
+                    type: "object",
+                    description: 'Required when type is "save"',
+                    properties: {
+                      ability: { type: "array", items: { type: "string" } },
+                      dc: { description: 'Fixed number, or a formula string e.g. "spellcasting"' },
+                      onSave: { type: "string", description: '"half" | "none" | "full"' }
+                    }
+                  },
+                  damageParts: {
+                    type: "array",
+                    description: 'Required when type is "damage" (or "attack"/"save" for their damage rolls)',
+                    items: {
+                      type: "object",
+                      properties: {
+                        number: { type: "number" },
+                        denomination: { type: "number", description: "Die size, e.g. 6 for d6; 0 for a flat bonus only" },
+                        bonus: { type: "string" },
+                        types: { type: "array", items: { type: "string" }, description: 'e.g. ["fire"]' }
+                      }
+                    }
+                  },
+                  healing: {
+                    type: "object",
+                    description: 'Required when type is "heal"',
+                    properties: {
+                      number: { type: "number" },
+                      denomination: { type: "number" },
+                      bonus: { type: "string" }
+                    }
+                  },
+                  roll: {
+                    type: "object",
+                    description: 'Required when type is "utility"',
+                    properties: {
+                      formula: { type: "string" },
+                      name: { type: "string" }
+                    }
+                  }
+                },
+                required: ["type", "name"]
+              }
+            },
+            passiveEffects: {
+              type: "array",
+              description: "Automatable passive bonuses/traits \u2014 become real dnd5e ActiveEffects that auto-apply, no manual math. Pick `passiveType` from the curated vocabulary; never invent raw dnd5e change keys.",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string", description: 'Ability name \u2014 handler prefixes with "<Item Name>: "' },
+                  passiveType: {
+                    type: "string",
+                    description: `One of: ${ALLOWED_PASSIVE_TYPES.join(", ")}`
+                  },
+                  value: { description: 'Bonus/flag value, e.g. "+1", 30, true, "fire", "draconic"' },
+                  target: { type: "string", description: 'Sub-target when needed, e.g. skill key "prc", sense "darkvision"' }
+                },
+                required: ["name", "passiveType", "value"]
+              }
+            },
+            inertAbilities: {
+              type: "array",
+              description: "Non-automatable abilities (DM-adjudicated/narrative, no data hook) \u2014 imported as separate lightweight Feature sub-items so the player can see them without opening the parent item.",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  description: { type: "string" }
+                },
+                required: ["name", "description"]
+              }
             }
           },
           required: ["actorIdentifier", "name", "description"]
+        }
+      },
+      {
+        name: "add-spell-to-actor",
+        description: "Add a homebrew spell directly to a Foundry actor's spell list using createEmbeddedDocuments. Use for spells granted by a homebrew item (e.g. a wondrous spellbook) that aren't in any compendium. Set `prepared: false` to add the spell to the list without preparing it.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            actorIdentifier: { type: "string", description: "Actor name or ID" },
+            name: { type: "string", description: "Spell name" },
+            level: { type: "number", description: "0 for a cantrip, 1-9 for a leveled spell" },
+            school: { type: "string", description: `One of: ${ALLOWED_SPELL_SCHOOLS.join(", ")}` },
+            description: { type: "string", description: "HTML description of the spell" },
+            activation: {
+              type: "object",
+              description: "Defaults to a 1-action activation if omitted",
+              properties: {
+                type: { type: "string", description: '"action" | "bonus" | "reaction" | "minute" | "hour" | "special"' },
+                value: { type: "number" },
+                condition: { type: "string", description: "e.g. reaction trigger text" }
+              }
+            },
+            duration: {
+              type: "object",
+              description: "Defaults to instantaneous if omitted",
+              properties: {
+                value: { type: "number" },
+                units: { type: "string", description: `One of: ${ALLOWED_DURATION_UNITS.join(", ")}` },
+                concentration: { type: "boolean" }
+              }
+            },
+            range: {
+              type: "object",
+              properties: {
+                value: { type: "number" },
+                units: { type: "string", description: `One of: ${ALLOWED_RANGE_UNITS.join(", ")}` }
+              }
+            },
+            target: {
+              type: "object",
+              properties: { count: { type: "number" }, type: { type: "string", description: 'e.g. "creature", "object", "self"' } }
+            },
+            prepared: { type: "boolean", description: "Whether the spell is currently prepared. Default: false (added to the list, unprepared).", default: false },
+            components: {
+              type: "array",
+              description: `Component tags shown on the spell (V/S/M/C/R). One or more of: ${ALLOWED_SPELL_COMPONENTS.join(", ")}. Include "concentration" if the spell requires Concentration (also drives duration.concentration unless set explicitly) and "ritual" if it's ritual-castable.`,
+              items: { type: "string" }
+            },
+            materials: {
+              type: "object",
+              description: 'Required if components includes "material" \u2014 the material component, flavor-only or with a real GP cost.',
+              properties: {
+                value: { type: "string", description: 'Material description, e.g. "a pinch of ash" or "powdered ruby worth 50gp"' },
+                consumed: { type: "boolean", description: "Whether the material is consumed on cast", default: false },
+                cost: { type: "number", description: "GP cost if the material has one; 0 for flavor-only", default: 0 }
+              }
+            },
+            activities: {
+              type: "array",
+              description: `The spell's actual casting roll(s) \u2014 same shape as add-item-to-actor activities (attack/save/heal/utility). Use type "attack" with attack.ability: "spellcasting" for a spell attack roll (classification defaults to "spell", not "weapon", for this tool), or type "save" with save.dc: "spellcasting" for a save-DC spell. Spell-slot consumption for a leveled spell (level > 0) needs no manual wiring \u2014 dnd5e defaults consumption.spellSlot to true and derives it automatically for any activity on a leveled spell item; do not pass a consumption target yourself. Omit activities only for a purely narrative/DM-adjudicated spell with no roll.`,
+              items: { type: "object" }
+            }
+          },
+          required: ["actorIdentifier", "name", "level", "school", "description"]
         }
       }
     ];
@@ -109008,14 +109498,13 @@ var ItemImportTools = class {
       type: external_exports.enum(ALLOWED_ITEM_TYPES).optional().default("feat"),
       description: external_exports.string(),
       quantity: external_exports.number().int().positive().finite().optional().default(1),
-      uses: external_exports.object({
-        value: external_exports.number().int().nonnegative().finite(),
-        max: external_exports.number().int().nonnegative().finite(),
-        recovery: external_exports.enum(ALLOWED_RECOVERY_PERIODS)
-      }).refine((uses) => uses.value <= uses.max, {
-        message: "uses.value must be less than or equal to uses.max"
-      }).optional(),
-      rarity: external_exports.enum(ALLOWED_ITEM_RARITIES).optional()
+      uses: usesSchema.optional(),
+      rarity: external_exports.enum(ALLOWED_ITEM_RARITIES).optional(),
+      requiresAttunement: external_exports.boolean().optional().default(false),
+      equipped: external_exports.boolean().optional(),
+      activities: external_exports.array(activitySchema).optional(),
+      passiveEffects: external_exports.array(passiveEffectSchema).optional(),
+      inertAbilities: external_exports.array(inertAbilitySchema).optional()
     });
     const params = schema2.parse(args);
     this.logger.info("Adding item to actor", { actor: params.actorIdentifier, item: params.name });
@@ -109023,7 +109512,53 @@ var ItemImportTools = class {
     if (!result?.success) {
       throw new Error(result?.error ?? "addItemToActor failed");
     }
-    return `Added "${params.name}" to actor. Item ID: ${result.itemId}`;
+    const parts = [`Added "${params.name}" to actor. Item ID: ${result.itemId}`];
+    if (Array.isArray(result.stubItemIds) && result.stubItemIds.length) {
+      parts.push(`Inert stub items created: ${result.stubItemIds.join(", ")}`);
+    }
+    if (result.warning) {
+      parts.push(`WARNING: ${result.warning}`);
+    }
+    return parts.join(" ");
+  }
+  async handleAddSpellToActor(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string(),
+      name: external_exports.string(),
+      level: external_exports.number().int().min(0).max(9),
+      school: external_exports.enum(ALLOWED_SPELL_SCHOOLS),
+      description: external_exports.string(),
+      activation: external_exports.object({
+        type: external_exports.enum(ALLOWED_ACTIVATION_TYPES).optional().default("action"),
+        value: external_exports.number().int().positive().optional(),
+        condition: external_exports.string().optional()
+      }).optional(),
+      duration: external_exports.object({
+        value: external_exports.number().optional(),
+        units: external_exports.enum(ALLOWED_DURATION_UNITS).optional().default("inst"),
+        concentration: external_exports.boolean().optional()
+      }).optional(),
+      range: external_exports.object({
+        value: external_exports.number().optional(),
+        units: external_exports.enum(ALLOWED_RANGE_UNITS).optional().default("ft")
+      }).optional(),
+      target: external_exports.object({ count: external_exports.number().optional(), type: external_exports.string().optional() }).optional(),
+      prepared: external_exports.boolean().optional().default(false),
+      components: external_exports.array(external_exports.enum(ALLOWED_SPELL_COMPONENTS)).optional().default([]),
+      materials: materialsSchema.optional(),
+      activities: external_exports.array(activitySchema).optional()
+    }).refine((p) => !p.components.includes("material") || !!p.materials, { message: '`materials` is required when components includes "material"' }).refine((p) => !p.materials || p.components.includes("material"), { message: '`materials` was provided but components does not include "material" \u2014 add it, or drop `materials`' });
+    const params = schema2.parse(args);
+    this.logger.info("Adding spell to actor", { actor: params.actorIdentifier, spell: params.name });
+    const result = await this.foundryClient.query("foundry-mcp-bridge.addSpellToActor", params);
+    if (!result?.success) {
+      throw new Error(result?.error ?? "addSpellToActor failed");
+    }
+    const parts = [`Added "${params.name}" to actor's spell list (prepared: ${params.prepared}). Item ID: ${result.itemId}`];
+    if (result.warning) {
+      parts.push(`WARNING: ${result.warning}`);
+    }
+    return parts.join(" ");
   }
 };
 
@@ -112808,6 +113343,7 @@ async function startBackend() {
   const compendiumTools = new CompendiumTools({ foundryClient, logger, systemRegistry });
   const sceneTools = new SceneTools({ foundryClient, logger });
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
+  const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
   const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
   const itemImportTools = new ItemImportTools({ foundryClient, logger });
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
@@ -112942,6 +113478,7 @@ async function startBackend() {
     ...compendiumTools.getToolDefinitions(),
     ...sceneTools.getToolDefinitions(),
     ...actorCreationTools.getToolDefinitions(),
+    ...actorManagementTools.getToolDefinitions(),
     ...creatureImportTools.getToolDefinitions(),
     ...dsa5CharacterCreator.getToolDefinitions(),
     ...questCreationTools.getToolDefinitions(),
@@ -113034,6 +113571,9 @@ async function startBackend() {
                 case "get-compendium-entry-full":
                   result = await actorCreationTools.handleGetCompendiumEntryFull(args);
                   break;
+                case "manage-actors":
+                  result = await actorManagementTools.handleManageActors(args);
+                  break;
                 case "create-dsa5-character-from-archetype":
                   result = await dsa5CharacterCreator.handleCreateCharacterFromArchetype(args);
                   break;
@@ -113105,6 +113645,9 @@ async function startBackend() {
                   break;
                 case "add-item-to-actor":
                   result = await itemImportTools.handleAddItemToActor(args);
+                  break;
+                case "add-spell-to-actor":
+                  result = await itemImportTools.handleAddSpellToActor(args);
                   break;
                 default:
                   throw new Error(`Unknown tool: ${name}`);

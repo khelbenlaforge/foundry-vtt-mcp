@@ -224,5 +224,10 @@ export declare class QueryHandlers {
      * Handle search character items request
      */
     private handleSearchCharacterItems;
+    private handleCreateActors;
+    private handleUpdateActors;
+    private handleDeleteActors;
+    private handleUpdateActorItems;
+    private handleDeleteActorItems;
 }
 //# sourceMappingURL=queries.d.ts.map

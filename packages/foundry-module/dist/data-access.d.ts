@@ -771,6 +771,71 @@ export declare class FoundryDataAccess {
         targets?: string[];
         requiresGMInteraction?: boolean;
     }>;
+    /**
+     * Create one or more actors of any type with arbitrary system data.
+     * Works for any Foundry game system — types and system fields are not validated here.
+     */
+    createActors(params: {
+        actors: Array<{
+            name: string;
+            type: string;
+            img?: string;
+            system?: Record<string, any>;
+        }>;
+        folder?: string;
+    }): Promise<{
+        created: Array<{
+            id: string;
+            name: string;
+            type: string;
+        }>;
+        total: number;
+    }>;
+    /**
+     * Update one or more existing actors by ID.
+     * Merges supplied fields into the actor (top-level keys overwrite).
+     */
+    updateActors(updates: Array<{
+        id: string;
+        name?: string;
+        img?: string;
+        system?: Record<string, any>;
+    }>): Promise<{
+        updated: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /**
+     * Update one or more items embedded in an actor.
+     */
+    updateActorItems(actorIdentifier: string, itemUpdates: Array<{
+        id: string;
+        name?: string;
+        img?: string;
+        system?: Record<string, any>;
+    }>): Promise<{
+        updated: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /**
+     * Delete one or more items embedded in an actor.
+     */
+    deleteActorItems(actorIdentifier: string, itemIds: string[]): Promise<{
+        deleted: string[];
+        total: number;
+    }>;
+    /**
+     * Delete one or more actors by ID.
+     */
+    deleteActors(ids: string[]): Promise<{
+        deleted: string[];
+        total: number;
+    }>;
 }
 export {};
 //# sourceMappingURL=data-access.d.ts.map

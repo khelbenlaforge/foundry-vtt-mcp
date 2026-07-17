@@ -4711,5 +4711,162 @@ export class FoundryDataAccess {
             throw new Error(`Failed to use item "${item.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
+    // ─── Generic actor CRUD ─────────────────────────────────────────────────────
+    // Ported from upstream ea8c3b4, stripped of mgt2e-specific normalization —
+    // this fork is dnd5e-only. See project_foundry_mcp_fork.md for context.
+    /**
+     * Create one or more actors of any type with arbitrary system data.
+     * Works for any Foundry game system — types and system fields are not validated here.
+     */
+    async createActors(params) {
+        const folderName = params.folder ?? 'Foundry MCP Actors';
+        const folderId = await this.getOrCreateFolder(folderName, 'Actor');
+        const docs = params.actors.map(a => {
+            const doc = { name: a.name, type: a.type };
+            if (a.img)
+                doc.img = a.img;
+            doc.system = a.system ?? {};
+            if (folderId)
+                doc.folder = folderId;
+            return doc;
+        });
+        try {
+            const created = await Actor.createDocuments(docs);
+            if (!created || created.length === 0) {
+                throw new Error('Foundry failed to create actor documents');
+            }
+            const result = {
+                created: created.map(a => ({ id: a.id, name: a.name, type: a.type })),
+                total: created.length,
+            };
+            this.auditLog('createActors', { count: result.total, types: params.actors.map(a => a.type) }, 'success');
+            return result;
+        }
+        catch (error) {
+            this.auditLog('createActors', { count: params.actors.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Update one or more existing actors by ID.
+     * Merges supplied fields into the actor (top-level keys overwrite).
+     */
+    async updateActors(updates) {
+        const updatedActors = [];
+        try {
+            for (const u of updates) {
+                const actor = game.actors.get(u.id);
+                if (!actor)
+                    throw new Error(`Actor not found: ${u.id}`);
+                const patch = {};
+                if (u.name !== undefined)
+                    patch.name = u.name;
+                if (u.img !== undefined)
+                    patch.img = u.img;
+                if (u.system !== undefined) {
+                    // Build a single patch.system nested object so Foundry deep-merges everything
+                    // in one pass without flat-key vs nested-key conflicts.
+                    // Dot-notation keys (e.g. "attributes.hp.-=temp") are expanded to their
+                    // nested equivalent — Foundry's mergeObject honours the "-=" deletion operator
+                    // at any depth in a nested object, just as it does with top-level flat keys.
+                    const systemPatch = {};
+                    for (const [key, val] of Object.entries(u.system)) {
+                        if (key.includes('.')) {
+                            const parts = key.split('.');
+                            let cur = systemPatch;
+                            for (let i = 0; i < parts.length - 1; i++) {
+                                if (!(parts[i] in cur))
+                                    cur[parts[i]] = {};
+                                cur = cur[parts[i]];
+                            }
+                            cur[parts[parts.length - 1]] = val;
+                        }
+                        else {
+                            systemPatch[key] = val;
+                        }
+                    }
+                    patch.system = systemPatch;
+                }
+                await actor.update(patch);
+                updatedActors.push({ id: actor.id, name: u.name ?? actor.name });
+            }
+            this.auditLog('updateActors', { count: updatedActors.length }, 'success');
+            return { updated: updatedActors, total: updatedActors.length };
+        }
+        catch (error) {
+            this.auditLog('updateActors', { count: updates.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Update one or more items embedded in an actor.
+     */
+    async updateActorItems(actorIdentifier, itemUpdates) {
+        const actor = game.actors.get(actorIdentifier) ??
+            game.actors.find((a) => a.name?.toLowerCase() === actorIdentifier.toLowerCase());
+        if (!actor)
+            throw new Error(`Actor not found: ${actorIdentifier}`);
+        const updated = [];
+        try {
+            for (const u of itemUpdates) {
+                const item = actor.items.get(u.id);
+                if (!item)
+                    throw new Error(`Item ${u.id} not found on actor "${actor.name}"`);
+                const patch = {};
+                if (u.name !== undefined)
+                    patch.name = u.name;
+                if (u.img !== undefined)
+                    patch.img = u.img;
+                if (u.system !== undefined)
+                    patch.system = u.system;
+                await item.update(patch);
+                updated.push({ id: item.id, name: u.name ?? item.name });
+            }
+            this.auditLog('updateActorItems', { actorId: actor.id, count: updated.length }, 'success');
+            return { updated, total: updated.length };
+        }
+        catch (error) {
+            this.auditLog('updateActorItems', { actorId: actor.id, count: itemUpdates.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Delete one or more items embedded in an actor.
+     */
+    async deleteActorItems(actorIdentifier, itemIds) {
+        const actor = game.actors.get(actorIdentifier) ??
+            game.actors.find((a) => a.name?.toLowerCase() === actorIdentifier.toLowerCase());
+        if (!actor)
+            throw new Error(`Actor not found: ${actorIdentifier}`);
+        const existing = itemIds.filter(id => actor.items.get(id));
+        if (existing.length === 0)
+            throw new Error('None of the provided item IDs were found on this actor');
+        try {
+            await actor.deleteEmbeddedDocuments('Item', existing);
+            this.auditLog('deleteActorItems', { actorId: actor.id, deleted: existing }, 'success');
+            return { deleted: existing, total: existing.length };
+        }
+        catch (error) {
+            this.auditLog('deleteActorItems', { actorId: actor.id, itemIds: existing }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
+    /**
+     * Delete one or more actors by ID.
+     */
+    async deleteActors(ids) {
+        const existing = ids.filter(id => game.actors.get(id));
+        if (existing.length === 0)
+            throw new Error('None of the provided actor IDs were found');
+        try {
+            await Actor.deleteDocuments(existing);
+            this.auditLog('deleteActors', { deleted: existing }, 'success');
+            return { deleted: existing, total: existing.length };
+        }
+        catch (error) {
+            this.auditLog('deleteActors', { ids: existing }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
 }
 //# sourceMappingURL=data-access.js.map
