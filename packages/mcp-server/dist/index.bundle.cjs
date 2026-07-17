@@ -12452,7 +12452,7 @@ var ConfigSchema = external_exports.object({
   logFilePath: external_exports.string().optional(),
   foundry: external_exports.object({
     host: external_exports.string().default("localhost"),
-    port: external_exports.number().min(1).max(65535).default(31415),
+    port: external_exports.number().min(1024).max(65535).default(31415),
     namespace: external_exports.string().default("/foundry-mcp"),
     reconnectAttempts: external_exports.number().min(1).max(20).default(5),
     reconnectDelay: external_exports.number().min(100).max(3e4).default(1e3),

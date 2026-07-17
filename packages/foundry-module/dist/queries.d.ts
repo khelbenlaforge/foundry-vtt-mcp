@@ -234,5 +234,13 @@ export declare class QueryHandlers {
     private handleCreateWorldItems;
     private handleListWorldItems;
     private handleUpdateWorldItems;
+    private handleAddSaveFeatureToActor;
+    private handleCreateNpcActor;
+    private handleAddAttackToActor;
+    private handleAddAuraToActor;
+    private handleAddPassiveFeatureToActor;
+    private handleAddAttackWithSaveToActor;
+    private handleSetActorSpellcasting;
+    private handleAddSpellsToActor;
 }
 //# sourceMappingURL=queries.d.ts.map

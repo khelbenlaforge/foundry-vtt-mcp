@@ -9,7 +9,7 @@ const ConfigSchema = z.object({
     logFilePath: z.string().optional(),
     foundry: z.object({
         host: z.string().default('localhost'),
-        port: z.number().min(1).max(65535).default(31415),
+        port: z.number().min(1024).max(65535).default(31415),
         namespace: z.string().default('/foundry-mcp'),
         reconnectAttempts: z.number().min(1).max(20).default(5),
         reconnectDelay: z.number().min(100).max(30000).default(1000),

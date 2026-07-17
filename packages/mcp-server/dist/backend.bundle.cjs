@@ -102774,7 +102774,7 @@ var ConfigSchema = external_exports.object({
   logFilePath: external_exports.string().optional(),
   foundry: external_exports.object({
     host: external_exports.string().default("localhost"),
-    port: external_exports.number().min(1).max(65535).default(31415),
+    port: external_exports.number().min(1024).max(65535).default(31415),
     namespace: external_exports.string().default("/foundry-mcp"),
     reconnectAttempts: external_exports.number().min(1).max(20).default(5),
     reconnectDelay: external_exports.number().min(100).max(3e4).default(1e3),
@@ -103703,6 +103703,9 @@ async function detectGameSystem(foundryClient, logger) {
     cachedSystem = "other";
     return cachedSystem;
   }
+}
+function getCachedSystemId() {
+  return cachedSystemId;
 }
 var SystemPaths = {
   dnd5e: {
@@ -106238,6 +106241,1656 @@ var ActorManagementTools = class {
     } catch (error) {
       this.errorHandler.handleToolError(error, "manage-actors (delete-items)", "actor item deletion");
     }
+  }
+};
+
+// dist/tools/world-items.js
+init_zod();
+var WorldItemsTools = class {
+  foundryClient;
+  logger;
+  errorHandler;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "WorldItemsTools" });
+    this.errorHandler = new ErrorHandler(this.logger);
+  }
+  getToolDefinitions() {
+    return [
+      {
+        name: "manage-world-items",
+        description: 'Manage Item documents in Foundry VTT. Use action to choose the operation: "create" (create world-level items in the sidebar), "list" (list world-level items with optional filters), "update" (patch existing world-level items by ID), "add-to-actor" (create and attach new items directly to an existing actor), or "remove-from-actor" (remove items from an actor by item IDs and/or names).',
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["create", "list", "update", "add-to-actor", "remove-from-actor"],
+              description: "Which item-management operation to perform"
+            },
+            items: {
+              type: "array",
+              minItems: 1,
+              description: 'Items to create for action "create" or "add-to-actor". Each item requires a name and a valid Foundry item type.',
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string", description: "Display name of the item" },
+                  type: {
+                    type: "string",
+                    description: "Foundry item type for the active game system"
+                  },
+                  img: {
+                    type: "string",
+                    description: "Optional icon path"
+                  },
+                  system: {
+                    type: "object",
+                    description: "System-specific item data",
+                    additionalProperties: true
+                  },
+                  effects: {
+                    type: "array",
+                    description: "Optional active-effect data for world item creation",
+                    items: {
+                      type: "object",
+                      additionalProperties: true
+                    }
+                  },
+                  flags: {
+                    type: "object",
+                    description: "Optional Foundry flags object for world item creation",
+                    additionalProperties: true
+                  }
+                },
+                required: ["name", "type"]
+              }
+            },
+            folder: {
+              type: "string",
+              description: 'For "create": folder name or ID to place created world items into. For "list": filter results to items in this folder.'
+            },
+            updates: {
+              type: "array",
+              minItems: 1,
+              description: 'World item patches to apply for action "update".',
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", description: "ID of the world item to update" },
+                  name: { type: "string", description: "New display name" },
+                  img: { type: "string", description: "New icon path" },
+                  system: {
+                    type: "object",
+                    description: "System-specific item fields to merge into the existing item",
+                    additionalProperties: true
+                  },
+                  folder: {
+                    type: "string",
+                    description: "Folder name or ID to move the item into"
+                  }
+                },
+                required: ["id"]
+              }
+            },
+            type: {
+              type: "string",
+              description: 'For "list": filter world items by type. For "remove-from-actor": constrain name-based removal to this item type.'
+            },
+            nameFilter: {
+              type: "string",
+              description: 'For "list": case-insensitive substring match on item name.'
+            },
+            actorIdentifier: {
+              type: "string",
+              description: 'For "add-to-actor" and "remove-from-actor": actor name or ID that owns the items.'
+            },
+            itemIds: {
+              type: "array",
+              items: { type: "string" },
+              description: 'For "remove-from-actor": item IDs on the actor to remove.'
+            },
+            itemNames: {
+              type: "array",
+              items: { type: "string" },
+              description: 'For "remove-from-actor": item names on the actor to remove.'
+            }
+          },
+          required: ["action"]
+        }
+      }
+    ];
+  }
+  async handleManageWorldItems(args) {
+    const action = args?.action;
+    switch (action) {
+      case "create":
+        return this.handleCreate(args);
+      case "list":
+        return this.handleList(args);
+      case "update":
+        return this.handleUpdate(args);
+      case "add-to-actor":
+        return this.handleAddToActor(args);
+      case "remove-from-actor":
+        return this.handleRemoveFromActor(args);
+      default:
+        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, list, update, add-to-actor, remove-from-actor`);
+    }
+  }
+  async handleCreate(args) {
+    const itemSchema = external_exports.object({
+      name: external_exports.string().min(1),
+      type: external_exports.string().min(1),
+      img: external_exports.string().optional(),
+      system: external_exports.record(external_exports.any()).optional(),
+      effects: external_exports.array(external_exports.record(external_exports.any())).optional(),
+      flags: external_exports.record(external_exports.any()).optional()
+    });
+    const schema2 = external_exports.object({
+      items: external_exports.array(itemSchema).min(1),
+      folder: external_exports.string().optional()
+    });
+    const { items, folder } = schema2.parse(args);
+    this.logger.info("Creating world items", {
+      count: items.length,
+      folder: folder ?? null,
+      types: items.map((item) => item.type)
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.createWorldItems", {
+        items,
+        ...folder !== void 0 ? { folder } : {}
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-world-items (create)", "world item creation");
+    }
+  }
+  async handleList(args) {
+    const schema2 = external_exports.object({
+      type: external_exports.string().optional(),
+      folder: external_exports.string().optional(),
+      nameFilter: external_exports.string().optional()
+    });
+    const { type: type2, folder, nameFilter } = schema2.parse(args);
+    this.logger.info("Listing world items", {
+      type: type2 ?? null,
+      folder: folder ?? null,
+      nameFilter: nameFilter ?? null
+    });
+    try {
+      const items = await this.foundryClient.query("foundry-mcp-bridge.listWorldItems", {
+        ...type2 !== void 0 ? { type: type2 } : {},
+        ...folder !== void 0 ? { folder } : {},
+        ...nameFilter !== void 0 ? { nameFilter } : {}
+      });
+      return {
+        items: items ?? [],
+        total: items?.length ?? 0
+      };
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-world-items (list)", "world item listing");
+    }
+  }
+  async handleUpdate(args) {
+    const schema2 = external_exports.object({
+      updates: external_exports.array(external_exports.object({
+        id: external_exports.string().min(1),
+        name: external_exports.string().optional(),
+        img: external_exports.string().optional(),
+        system: external_exports.record(external_exports.any()).optional(),
+        folder: external_exports.string().optional()
+      })).min(1)
+    });
+    const { updates } = schema2.parse(args);
+    this.logger.info("Updating world items", {
+      count: updates.length,
+      ids: updates.map((update) => update.id)
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.updateWorldItems", { updates });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-world-items (update)", "world item update");
+    }
+  }
+  async handleAddToActor(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      items: external_exports.array(external_exports.object({
+        name: external_exports.string().min(1),
+        type: external_exports.string().min(1),
+        img: external_exports.string().optional(),
+        system: external_exports.record(external_exports.any()).optional()
+      })).min(1)
+    });
+    const { actorIdentifier, items } = schema2.parse(args);
+    this.logger.info("Adding items to actor", {
+      actorIdentifier,
+      count: items.length,
+      types: items.map((item) => item.type)
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.addActorItems", {
+        actorIdentifier,
+        items
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-world-items (add-to-actor)", "adding items to actor");
+    }
+  }
+  async handleRemoveFromActor(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      itemIds: external_exports.array(external_exports.string().min(1)).optional(),
+      itemNames: external_exports.array(external_exports.string().min(1)).optional(),
+      type: external_exports.string().optional()
+    }).refine((value) => (value.itemIds?.length ?? 0) + (value.itemNames?.length ?? 0) > 0, {
+      message: "Provide itemIds and/or itemNames identifying the items to remove"
+    });
+    const { actorIdentifier, itemIds, itemNames, type: type2 } = schema2.parse(args);
+    this.logger.info("Removing items from actor", {
+      actorIdentifier,
+      ids: itemIds?.length ?? 0,
+      names: itemNames?.length ?? 0,
+      type: type2 ?? null
+    });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.removeActorItems", {
+        actorIdentifier,
+        ...itemIds !== void 0 ? { itemIds } : {},
+        ...itemNames !== void 0 ? { itemNames } : {},
+        ...type2 !== void 0 ? { type: type2 } : {}
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-world-items (remove-from-actor)", "removing items from actor");
+    }
+  }
+};
+
+// dist/tools/dnd5e/add-feature.js
+init_zod();
+var DAMAGE_CANONICAL = /* @__PURE__ */ new Set([
+  "acid",
+  "bludgeoning",
+  "cold",
+  "fire",
+  "force",
+  "lightning",
+  "necrotic",
+  "piercing",
+  "poison",
+  "psychic",
+  "radiant",
+  "slashing",
+  "thunder"
+]);
+var ATTACK_PROPERTY_CANONICAL = /* @__PURE__ */ new Set([
+  "ada",
+  "amm",
+  "fin",
+  "fir",
+  "foc",
+  "hvy",
+  "lgt",
+  "lod",
+  "mgc",
+  "rch",
+  "ret",
+  "spc",
+  "thr",
+  "two",
+  "ver"
+]);
+var CLASS_DEFAULT_ABILITY = {
+  wizard: "int",
+  artificer: "int",
+  cleric: "wis",
+  druid: "wis",
+  ranger: "wis",
+  sorcerer: "cha",
+  warlock: "cha",
+  bard: "cha",
+  paladin: "cha"
+};
+var damagePart = external_exports.object({
+  number: external_exports.number().int().min(1),
+  denomination: external_exports.number().int().refine((d) => [4, 6, 8, 10, 12, 20, 100].includes(d), {
+    message: "denomination must be one of 4, 6, 8, 10, 12, 20, 100"
+  }),
+  type: external_exports.string().min(1, "damage type cannot be empty")
+});
+var damagePartSchema = {
+  type: "object",
+  properties: {
+    number: { type: "number", description: "Number of dice (e.g. 4)", minimum: 1 },
+    denomination: { type: "number", description: "Die size", enum: [4, 6, 8, 10, 12, 20, 100] },
+    type: { type: "string", description: 'Damage type (e.g. "fire", "slashing", "cold")' }
+  },
+  required: ["number", "denomination", "type"]
+};
+var DnD5eAddFeatureTool = class {
+  foundryClient;
+  logger;
+  errorHandler;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "DnD5eAddFeatureTool" });
+    this.errorHandler = new ErrorHandler(this.logger);
+  }
+  getToolDefinitions() {
+    return [
+      {
+        name: "dnd5e-add-feature",
+        description: '[D&D 5e only] Add a feature, attack, spellcasting setup, or spells to an existing actor. Set featureType to select the mode \u2014 each mode uses only its own parameters:\n\n\u2022 passive \u2014 descriptive trait, no roll (Multiattack, Magic Resistance, Spider Climb).\n  Required: actorIdentifier, featureName\n  Optional: description, sourceRules, sourceBook, sourcePage\n\n\u2022 save \u2014 feature that forces a saving throw (breath weapon, cone of cold, etc.).\n  Required: actorIdentifier, featureName, saveAbility, saveDC, damageParts\n  Optional: description, activationType, halfOnSave, areaType, areaSize (required if areaType set), areaUnits, affectsType\n\n\u2022 attack \u2014 weapon attack with to-hit roll (Claw, Bite, Scimitar, etc.).\n  Required: actorIdentifier, featureName, attackType, damageParts\n  Required when ranged: rangeFt\n  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, sourceRules, sourceBook, sourcePage\n\n\u2022 attack-with-save \u2014 attack roll on hit + forced save for bonus damage (e.g. Stinger: piercing hit + CON save or poison damage).\n  Required: actorIdentifier, featureName, attackType, damageParts, saveAbility, saveDC, saveDamageParts\n  Required when ranged: rangeFt\n  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, saveOnSave, sourceRules, sourceBook, sourcePage\n\n\u2022 aura \u2014 automatic-damage area, no to-hit, no save (all creatures in range take damage).\n  Required: actorIdentifier, featureName, damageParts, areaType, areaSize\n  Optional: description, activationType, areaUnits, affectsType, sourceRules, sourceBook, sourcePage\n\n\u2022 spellcasting \u2014 configure spell slots and casting ability. Run this BEFORE featureType "spells".\n  Required: actorIdentifier, spellcastingClass, spellcastingLevel\n  Optional: spellcastingAbility (default per class: wizard/artificer\u2192INT, cleric/druid/ranger\u2192WIS, sorcerer/warlock/bard/paladin\u2192CHA), sourceRules\n\n\u2022 spells \u2014 import named spells from compendium. Names must be in English.\n  Required: actorIdentifier, spellNames (max 50)\n  Optional: compendiumPacks (default ["dnd5e.spells"])\n\nUse list-characters or get-character first to find the actorIdentifier.',
+        inputSchema: {
+          type: "object",
+          properties: {
+            featureType: {
+              type: "string",
+              enum: [
+                "passive",
+                "save",
+                "attack",
+                "attack-with-save",
+                "aura",
+                "spellcasting",
+                "spells"
+              ],
+              description: "Mode selector \u2014 determines which parameters are used and which Foundry handler is called."
+            },
+            actorIdentifier: {
+              type: "string",
+              description: "Name or ID of the target actor (partial name match supported). Required for all featureTypes."
+            },
+            featureName: {
+              type: "string",
+              description: "Name for the new feature/item \u2014 must be unique on the actor. Required for: passive, save, attack, attack-with-save, aura."
+            },
+            description: {
+              type: "string",
+              description: "HTML description of the feature (optional). Used by: passive, save, attack, attack-with-save, aura.",
+              default: ""
+            },
+            activationType: {
+              type: "string",
+              enum: ["action", "bonus", "reaction", "legendary", "lair", "special"],
+              description: 'Action economy type. Used by: save, attack, attack-with-save, aura. Default: "action".',
+              default: "action"
+            },
+            damageParts: {
+              type: "array",
+              minItems: 1,
+              description: "Damage components. For attack: first entry is base weapon die, extra entries stack on top. For save and aura: all damage dealt on trigger. For attack-with-save: the attack roll damage (on hit). Required for: save, attack, attack-with-save, aura.",
+              items: damagePartSchema
+            },
+            saveAbility: {
+              type: "string",
+              enum: ["str", "dex", "con", "int", "wis", "cha"],
+              description: "Ability used for the saving throw. Required for: save, attack-with-save."
+            },
+            saveDC: {
+              type: "number",
+              description: "Saving throw DC (1\u201330). Required for: save, attack-with-save.",
+              minimum: 1,
+              maximum: 30
+            },
+            halfOnSave: {
+              type: "boolean",
+              description: "Whether the target takes half damage on a successful save. Used by: save. Default: true.",
+              default: true
+            },
+            saveDamageParts: {
+              type: "array",
+              minItems: 1,
+              description: "Damage dealt by the save effect on a failed save (independent of attack damage). Required for: attack-with-save.",
+              items: damagePartSchema
+            },
+            saveOnSave: {
+              type: "string",
+              enum: ["half", "none"],
+              description: '"none" \u2014 no damage on a successful save (default). "half" \u2014 half save damage on a successful save. Used by: attack-with-save.',
+              default: "none"
+            },
+            areaType: {
+              type: "string",
+              enum: ["cone", "cube", "cylinder", "emanation", "line", "radius", "sphere", ""],
+              description: 'Area-of-effect template shape. For save: optional (omit or use "" for no template); if set, areaSize is required. For aura: required \u2014 use "emanation" or "sphere" for radial auras.',
+              default: ""
+            },
+            areaSize: {
+              type: "number",
+              description: "Template size in areaUnits (e.g. 30 for a 30 ft cone). Must be > 0. Required for: aura. Required for save when areaType is set.",
+              exclusiveMinimum: 0
+            },
+            areaUnits: {
+              type: "string",
+              enum: ["ft", "m"],
+              description: 'Units for areaSize. Used by: save, aura. Default: "ft".',
+              default: "ft"
+            },
+            affectsType: {
+              type: "string",
+              enum: ["creature", "object", "space", ""],
+              description: 'What the area targets. Used by: save, aura. Default: "creature".',
+              default: "creature"
+            },
+            attackType: {
+              type: "string",
+              enum: ["melee", "ranged"],
+              description: '"melee" for reach-based attacks; "ranged" for bow/thrown attacks. Required for: attack, attack-with-save.'
+            },
+            weaponClass: {
+              type: "string",
+              enum: ["natural", "simpleM", "martialM", "simpleR", "martialR"],
+              description: 'Weapon category. Use "natural" for monster attacks (claws, bite, touch). Used by: attack, attack-with-save. Default: "natural".',
+              default: "natural"
+            },
+            abilityModifier: {
+              type: "string",
+              enum: ["str", "dex", "con", "int", "wis", "cha"],
+              description: "Ability used for to-hit and damage rolls. Omit to use default: STR for melee, DEX for ranged. Used by: attack, attack-with-save."
+            },
+            attackBonus: {
+              type: "number",
+              description: "Flat bonus to the attack roll only, not damage (e.g. 1 for +1 to hit). Used by: attack, attack-with-save. Default: 0.",
+              minimum: 0,
+              maximum: 10,
+              default: 0
+            },
+            proficient: {
+              type: "boolean",
+              description: "Whether the actor is proficient with this weapon (adds proficiency bonus to to-hit). Used by: attack, attack-with-save. Default: true.",
+              default: true
+            },
+            equipped: {
+              type: "boolean",
+              description: "Whether the weapon is equipped and available for attack rolls. Used by: attack, attack-with-save. Default: true.",
+              default: true
+            },
+            reachFt: {
+              type: "number",
+              description: "Melee reach in feet. Used by: attack, attack-with-save (melee only). Default: 5.",
+              minimum: 5,
+              default: 5
+            },
+            rangeFt: {
+              type: "number",
+              description: 'Normal range in feet. Used by: attack, attack-with-save. Required when attackType is "ranged".',
+              minimum: 1
+            },
+            longRangeFt: {
+              type: "number",
+              description: "Long range in feet \u2014 attacks beyond rangeFt up to this distance are at disadvantage. Must be greater than rangeFt. Used by: attack, attack-with-save (ranged only).",
+              minimum: 1
+            },
+            properties: {
+              type: "array",
+              description: 'Weapon property codes (e.g. ["fin", "lgt"]). Canonical 2014 codes: ada, amm, fin, fir, foc, hvy, lgt, lod, mgc, rch, ret, spc, thr, two, ver. Used by: attack, attack-with-save. Default: [].',
+              items: { type: "string" },
+              default: []
+            },
+            spellcastingClass: {
+              type: "string",
+              enum: [
+                "artificer",
+                "bard",
+                "cleric",
+                "druid",
+                "paladin",
+                "ranger",
+                "sorcerer",
+                "warlock",
+                "wizard"
+              ],
+              description: "The spellcasting class \u2014 determines slot table and default casting ability. Warlock uses Pact Magic. Required for: spellcasting."
+            },
+            spellcastingLevel: {
+              type: "number",
+              description: "Class level (1\u201320). Determines how many slots the actor receives. Required for: spellcasting.",
+              minimum: 1,
+              maximum: 20
+            },
+            spellcastingAbility: {
+              type: "string",
+              enum: ["str", "dex", "con", "int", "wis", "cha"],
+              description: "Override the casting ability. Omit to use the class default. Used by: spellcasting."
+            },
+            spellNames: {
+              type: "array",
+              description: "English spell names to import (exact match, case-insensitive). Max 50 per call. Required for: spells.",
+              minItems: 1,
+              maxItems: 50,
+              items: { type: "string", minLength: 1 }
+            },
+            compendiumPacks: {
+              type: "array",
+              description: 'Compendium pack IDs to search, in priority order (first match wins). Default: ["dnd5e.spells"] (SRD 2014). Use "dnd5e.spells24" for 2024 rules. Used by: spells.',
+              items: { type: "string", minLength: 1 },
+              default: ["dnd5e.spells"]
+            },
+            sourceRules: {
+              type: "string",
+              enum: ["2014", "2024"],
+              description: 'Rules edition. Used by: passive, attack, attack-with-save, aura, spellcasting. Default: "2014".',
+              default: "2014"
+            },
+            sourceBook: {
+              type: "string",
+              description: `Source book abbreviation (e.g. "MM'14"). Used by: passive, attack, attack-with-save, aura.`,
+              default: ""
+            },
+            sourcePage: {
+              type: "string",
+              description: "Page number in the source book. Used by: passive, attack, attack-with-save, aura.",
+              default: ""
+            }
+          },
+          required: ["featureType", "actorIdentifier"]
+        }
+      }
+    ];
+  }
+  async handleAddFeature(args) {
+    const { featureType } = external_exports.object({
+      featureType: external_exports.enum([
+        "passive",
+        "save",
+        "attack",
+        "attack-with-save",
+        "aura",
+        "spellcasting",
+        "spells"
+      ])
+    }).parse(args);
+    switch (featureType) {
+      case "passive":
+        return this.handlePassive(args);
+      case "save":
+        return this.handleSave(args);
+      case "attack":
+        return this.handleAttack(args);
+      case "attack-with-save":
+        return this.handleAttackWithSave(args);
+      case "aura":
+        return this.handleAura(args);
+      case "spellcasting":
+        return this.handleSpellcasting(args);
+      case "spells":
+        return this.handleSpells(args);
+    }
+  }
+  async handlePassive(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("passive"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      featureName: external_exports.string().min(1, "featureName cannot be empty"),
+      description: external_exports.string().default(""),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014"),
+      sourceBook: external_exports.string().default(""),
+      sourcePage: external_exports.string().default("")
+    });
+    const parsed = schema2.parse(args);
+    this.logger.info("Adding passive feature to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      featureName: parsed.featureName
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (passive) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addPassiveFeatureToActor", parsed);
+      this.logger.info("Passive feature added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id
+      });
+      return this.formatPassiveResponse(result, parsed);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "passive feature creation");
+    }
+  }
+  formatPassiveResponse(result, params) {
+    const summary = `\u2705 Passive feature "${result.item.name}" added to "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Feature:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Type:** passive trait`,
+      `**Rules:** ${params.sourceRules}`
+    ].join("\n");
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      message: `${summary}
+
+${details}`
+    };
+  }
+  async handleSave(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("save"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      featureName: external_exports.string().min(1, "featureName cannot be empty"),
+      description: external_exports.string().default(""),
+      activationType: external_exports.enum(["action", "bonus", "reaction", "legendary", "lair", "special"]).default("action"),
+      saveAbility: external_exports.enum(["str", "dex", "con", "int", "wis", "cha"]),
+      saveDC: external_exports.number().int().min(1).max(30),
+      damageParts: external_exports.array(damagePart).min(1, "at least one damage part is required"),
+      halfOnSave: external_exports.boolean().default(true),
+      areaType: external_exports.enum(["cone", "cube", "cylinder", "emanation", "line", "radius", "sphere", ""]).default(""),
+      areaSize: external_exports.number().positive().optional(),
+      areaUnits: external_exports.enum(["ft", "m"]).default("ft"),
+      affectsType: external_exports.enum(["creature", "object", "space", ""]).default("creature")
+    }).superRefine((data, ctx) => {
+      if (data.areaType && data.areaSize === void 0) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["areaSize"],
+          message: "areaSize is required when areaType is set"
+        });
+      }
+    });
+    const parsed = schema2.parse(args);
+    const warnings = [];
+    for (const part of parsed.damageParts) {
+      if (!DAMAGE_CANONICAL.has(part.type)) {
+        const msg = `Unknown damage type "${part.type}" \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { value: part.type });
+      }
+    }
+    this.logger.info("Adding save feature to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      featureName: parsed.featureName,
+      saveAbility: parsed.saveAbility,
+      saveDC: parsed.saveDC,
+      warnings: warnings.length
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (save) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addSaveFeatureToActor", parsed);
+      this.logger.info("Save feature added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id
+      });
+      return this.formatSaveResponse(result, parsed, warnings);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "save feature creation");
+    }
+  }
+  formatSaveResponse(result, params, warnings) {
+    const damageDesc = params.damageParts.map((p) => `${p.number}d${p.denomination} ${p.type}`).join(" + ");
+    const areaDesc = params.areaType && params.areaType !== "" ? `${params.areaSize}${params.areaUnits} ${params.areaType}` : "none";
+    const summary = `\u2705 Save feature "${result.item.name}" added to "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Feature:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Save:** DC ${params.saveDC} ${String(params.saveAbility).toUpperCase()}`,
+      `**Damage:** ${damageDesc} (${params.halfOnSave ? "half on save" : "no damage on save"})`,
+      `**Area:** ${areaDesc}`
+    ].join("\n");
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      warnings,
+      message: `${summary}
+
+${details}${warningSection}`
+    };
+  }
+  async handleAttack(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("attack"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      featureName: external_exports.string().min(1, "featureName cannot be empty"),
+      description: external_exports.string().default(""),
+      activationType: external_exports.enum(["action", "bonus", "reaction", "legendary", "lair", "special"]).default("action"),
+      attackType: external_exports.enum(["melee", "ranged"]),
+      weaponClass: external_exports.enum(["natural", "simpleM", "martialM", "simpleR", "martialR"]).default("natural"),
+      abilityModifier: external_exports.enum(["str", "dex", "con", "int", "wis", "cha"]).optional(),
+      attackBonus: external_exports.number().int().min(0).max(10).default(0),
+      proficient: external_exports.boolean().default(true),
+      equipped: external_exports.boolean().default(true),
+      reachFt: external_exports.number().int().min(5).default(5),
+      rangeFt: external_exports.number().int().min(1).optional(),
+      longRangeFt: external_exports.number().int().min(1).optional(),
+      damageParts: external_exports.array(damagePart).min(1, "at least one damage part is required"),
+      properties: external_exports.array(external_exports.string()).default([]),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014"),
+      sourceBook: external_exports.string().default(""),
+      sourcePage: external_exports.string().default("")
+    }).superRefine((data, ctx) => {
+      if (data.attackType === "ranged" && data.rangeFt === void 0) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["rangeFt"],
+          message: 'rangeFt is required when attackType is "ranged"'
+        });
+      }
+      if (data.longRangeFt !== void 0 && data.rangeFt !== void 0 && data.longRangeFt <= data.rangeFt) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["longRangeFt"],
+          message: `longRangeFt (${data.longRangeFt}) must be greater than rangeFt (${data.rangeFt})`
+        });
+      }
+    });
+    const parsed = schema2.parse(args);
+    const effectiveAbility = parsed.abilityModifier ?? (parsed.attackType === "melee" ? "str" : "dex");
+    const warnings = [];
+    for (const part of parsed.damageParts) {
+      if (!DAMAGE_CANONICAL.has(part.type)) {
+        const msg = `Unknown damage type "${part.type}" \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { value: part.type });
+      }
+    }
+    for (const prop of parsed.properties) {
+      if (!ATTACK_PROPERTY_CANONICAL.has(prop)) {
+        const msg = `Unknown weapon property "${prop}" \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { value: prop });
+      }
+    }
+    this.logger.info("Adding attack feature to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      featureName: parsed.featureName,
+      attackType: parsed.attackType,
+      ability: effectiveAbility,
+      warnings: warnings.length
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (attack) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addAttackToActor", {
+        ...parsed,
+        effectiveAbility
+      });
+      this.logger.info("Attack feature added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id
+      });
+      return this.formatAttackResponse(result, { ...parsed, effectiveAbility }, warnings);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "attack feature creation");
+    }
+  }
+  formatAttackResponse(result, params, warnings) {
+    const bonusStr = params.attackBonus > 0 ? ` +${params.attackBonus} to hit` : "";
+    const damageDesc = params.damageParts.map((p) => `${p.number}d${p.denomination} ${p.type}`).join(" + ");
+    const rangeDesc = params.attackType === "melee" ? `reach ${params.reachFt ?? 5} ft.` : `range ${params.rangeFt}${params.longRangeFt ? `/${params.longRangeFt}` : ""} ft.`;
+    const summary = `\u2705 Attack "${result.item.name}" added to "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Attack:** ${params.attackType} \u2014 ${String(params.effectiveAbility).toUpperCase()} modifier${bonusStr}`,
+      `**Damage:** ${damageDesc}`,
+      `**Range/Reach:** ${rangeDesc}`,
+      `**Weapon class:** ${params.weaponClass}`
+    ].join("\n");
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      warnings,
+      message: `${summary}
+
+${details}${warningSection}`
+    };
+  }
+  async handleAttackWithSave(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("attack-with-save"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      featureName: external_exports.string().min(1, "featureName cannot be empty"),
+      description: external_exports.string().default(""),
+      activationType: external_exports.enum(["action", "bonus", "reaction", "legendary", "lair", "special"]).default("action"),
+      attackType: external_exports.enum(["melee", "ranged"]),
+      weaponClass: external_exports.enum(["natural", "simpleM", "martialM", "simpleR", "martialR"]).default("natural"),
+      abilityModifier: external_exports.enum(["str", "dex", "con", "int", "wis", "cha"]).optional(),
+      attackBonus: external_exports.number().int().min(0).max(10).default(0),
+      proficient: external_exports.boolean().default(true),
+      equipped: external_exports.boolean().default(true),
+      reachFt: external_exports.number().int().min(5).default(5),
+      rangeFt: external_exports.number().int().min(1).optional(),
+      longRangeFt: external_exports.number().int().min(1).optional(),
+      damageParts: external_exports.array(damagePart).min(1, "at least one damage part is required"),
+      properties: external_exports.array(external_exports.string()).default([]),
+      saveAbility: external_exports.enum(["str", "dex", "con", "int", "wis", "cha"]),
+      saveDC: external_exports.number().int().min(1).max(30),
+      saveDamageParts: external_exports.array(damagePart).min(1, "at least one save damage part is required"),
+      saveOnSave: external_exports.enum(["half", "none"]).default("none"),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014"),
+      sourceBook: external_exports.string().default(""),
+      sourcePage: external_exports.string().default("")
+    }).superRefine((data, ctx) => {
+      if (data.attackType === "ranged" && data.rangeFt === void 0) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["rangeFt"],
+          message: 'rangeFt is required when attackType is "ranged"'
+        });
+      }
+      if (data.longRangeFt !== void 0 && data.rangeFt !== void 0 && data.longRangeFt <= data.rangeFt) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["longRangeFt"],
+          message: `longRangeFt (${data.longRangeFt}) must be greater than rangeFt (${data.rangeFt})`
+        });
+      }
+    });
+    const parsed = schema2.parse(args);
+    const effectiveAbility = parsed.abilityModifier ?? (parsed.attackType === "melee" ? "str" : "dex");
+    const warnings = [];
+    for (const part of [...parsed.damageParts, ...parsed.saveDamageParts]) {
+      if (!DAMAGE_CANONICAL.has(part.type)) {
+        const msg = `Unknown damage type "${part.type}" \u2014 verify it matches dnd5e system values`;
+        if (!warnings.includes(msg))
+          warnings.push(msg);
+        this.logger.warn(msg, { value: part.type });
+      }
+    }
+    this.logger.info("Adding attack+save feature to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      featureName: parsed.featureName,
+      attackType: parsed.attackType,
+      saveAbility: parsed.saveAbility,
+      saveDC: parsed.saveDC,
+      warnings: warnings.length
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (attack-with-save) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addAttackWithSaveToActor", {
+        ...parsed,
+        effectiveAbility
+      });
+      this.logger.info("Attack+save feature added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id
+      });
+      return this.formatAttackWithSaveResponse(result, { ...parsed, effectiveAbility }, warnings);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "attack+save feature creation");
+    }
+  }
+  formatAttackWithSaveResponse(result, params, warnings) {
+    const bonusStr = params.attackBonus > 0 ? ` +${params.attackBonus} to hit` : "";
+    const attackDamageDesc = params.damageParts.map((p) => `${p.number}d${p.denomination} ${p.type}`).join(" + ");
+    const saveDamageDesc = params.saveDamageParts.map((p) => `${p.number}d${p.denomination} ${p.type}`).join(" + ");
+    const rangeDesc = params.attackType === "melee" ? `reach ${params.reachFt ?? 5} ft.` : `range ${params.rangeFt}${params.longRangeFt ? `/${params.longRangeFt}` : ""} ft.`;
+    const summary = `\u2705 Attack+Save "${result.item.name}" added to "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Attack:** ${params.attackType} \u2014 ${String(params.effectiveAbility).toUpperCase()} modifier${bonusStr}, ${rangeDesc}`,
+      `**Attack damage:** ${attackDamageDesc}`,
+      `**Save:** DC ${params.saveDC} ${String(params.saveAbility).toUpperCase()} \u2014 ${saveDamageDesc} (${params.saveOnSave === "half" ? "half on save" : "no damage on save"})`
+    ].join("\n");
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      warnings,
+      message: `${summary}
+
+${details}${warningSection}`
+    };
+  }
+  async handleAura(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("aura"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      featureName: external_exports.string().min(1, "featureName cannot be empty"),
+      description: external_exports.string().default(""),
+      activationType: external_exports.enum(["action", "bonus", "reaction", "legendary", "lair", "special"]).default("action"),
+      damageParts: external_exports.array(damagePart).min(1, "at least one damage part is required"),
+      areaType: external_exports.enum(["cone", "cube", "cylinder", "emanation", "line", "radius", "sphere"]),
+      areaSize: external_exports.number().positive("areaSize must be greater than 0"),
+      areaUnits: external_exports.enum(["ft", "m"]).default("ft"),
+      affectsType: external_exports.enum(["creature", "object", "space", ""]).default("creature"),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014"),
+      sourceBook: external_exports.string().default(""),
+      sourcePage: external_exports.string().default("")
+    });
+    const parsed = schema2.parse(args);
+    const warnings = [];
+    for (const part of parsed.damageParts) {
+      if (!DAMAGE_CANONICAL.has(part.type)) {
+        const msg = `Unknown damage type "${part.type}" \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { value: part.type });
+      }
+    }
+    this.logger.info("Adding aura feature to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      featureName: parsed.featureName,
+      areaType: parsed.areaType,
+      areaSize: parsed.areaSize,
+      warnings: warnings.length
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (aura) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addAuraToActor", parsed);
+      this.logger.info("Aura feature added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id
+      });
+      return this.formatAuraResponse(result, parsed, warnings);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "aura feature creation");
+    }
+  }
+  formatAuraResponse(result, params, warnings) {
+    const damageDesc = params.damageParts.map((p) => `${p.number}d${p.denomination} ${p.type}`).join(" + ");
+    const areaDesc = `${params.areaSize}${params.areaUnits} ${params.areaType}`;
+    const summary = `\u2705 Aura "${result.item.name}" added to "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Feature:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Damage:** ${damageDesc} (automatic \u2014 no attack roll, no saving throw)`,
+      `**Area:** ${areaDesc}, affects: ${params.affectsType || "any"}`,
+      `**Activation:** ${params.activationType}`
+    ].join("\n");
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      warnings,
+      message: `${summary}
+
+${details}${warningSection}`
+    };
+  }
+  async handleSpellcasting(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("spellcasting"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      spellcastingClass: external_exports.enum([
+        "artificer",
+        "bard",
+        "cleric",
+        "druid",
+        "paladin",
+        "ranger",
+        "sorcerer",
+        "warlock",
+        "wizard"
+      ]),
+      spellcastingLevel: external_exports.number().int().min(1).max(20),
+      spellcastingAbility: external_exports.enum(["str", "dex", "con", "int", "wis", "cha"]).optional(),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014")
+    });
+    const parsed = schema2.parse(args);
+    const effectiveAbility = parsed.spellcastingAbility ?? CLASS_DEFAULT_ABILITY[parsed.spellcastingClass];
+    this.logger.info("Setting actor spellcasting", {
+      actorIdentifier: parsed.actorIdentifier,
+      spellcastingClass: parsed.spellcastingClass,
+      spellcastingLevel: parsed.spellcastingLevel,
+      ability: effectiveAbility
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (spellcasting) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.setActorSpellcasting", {
+        ...parsed,
+        effectiveAbility
+      });
+      this.logger.info("Actor spellcasting set successfully", { actorId: result.actor?.id });
+      return this.formatSpellcastingResponse(result, { ...parsed, effectiveAbility });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "spellcasting setup");
+    }
+  }
+  formatSpellcastingResponse(result, params) {
+    const isWarlock = params.spellcastingClass === "warlock";
+    const slotsDesc = isWarlock ? `Pact Magic: ${result.spellcasting.slots.pact.max} slot(s) of level ${result.spellcasting.slots.pact.level}` : Object.entries(result.spellcasting.slots).filter(([, n]) => n > 0).map(([k, n]) => `L${k.replace("spell", "")}: ${n}`).join(", ") || "no slots";
+    const summary = `\u2705 Spellcasting configured on "${result.actor.name}" \u2014 ${params.spellcastingClass} level ${params.spellcastingLevel}`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Class:** ${params.spellcastingClass} \u2014 level ${params.spellcastingLevel}`,
+      `**Ability:** ${String(params.effectiveAbility).toUpperCase()}`,
+      `**Slots:** ${slotsDesc}`
+    ].join("\n");
+    const warningSection = result.warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings:**
+${result.warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      actor: result.actor,
+      spellcasting: result.spellcasting,
+      warnings: result.warnings,
+      message: `${summary}
+
+${details}${warningSection}`
+    };
+  }
+  async handleSpells(args) {
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("spells"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      spellNames: external_exports.array(external_exports.string().min(1)).min(1).max(50),
+      compendiumPacks: external_exports.array(external_exports.string().min(1)).default(["dnd5e.spells"])
+    });
+    const parsed = schema2.parse(args);
+    this.logger.info("Adding spells to D&D 5e actor", {
+      actorIdentifier: parsed.actorIdentifier,
+      spellCount: parsed.spellNames.length,
+      packs: parsed.compendiumPacks
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (spells) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addSpellsToActor", parsed);
+      this.logger.info("Spells import complete", {
+        actorId: result.actor?.id,
+        added: result.added?.length,
+        skipped: result.skipped?.length,
+        notFound: result.notFound?.length,
+        failed: result.failed?.length
+      });
+      return this.formatSpellsResponse(result, parsed);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "spell import");
+    }
+  }
+  formatSpellsResponse(result, params) {
+    const added = result.added;
+    const skipped = result.skipped;
+    const notFound = result.notFound;
+    const failed = result.failed;
+    const warnings = result.warnings;
+    const total = params.spellNames.length;
+    const parts = [];
+    if (added.length > 0)
+      parts.push(`${added.length} added`);
+    if (skipped.length > 0)
+      parts.push(`${skipped.length} skipped`);
+    if (notFound.length > 0)
+      parts.push(`${notFound.length} not found`);
+    if (failed.length > 0)
+      parts.push(`${failed.length} failed`);
+    const icon = failed.length > 0 ? "\u26A0\uFE0F" : notFound.length > 0 ? "\u{1F50D}" : "\u2705";
+    const summary = `${icon} Spells imported to "${result.actor.name}" \u2014 ${parts.length > 0 ? parts.join(", ") : "nothing changed"}`;
+    const lines = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Requested:** ${total} \u2014 Added: ${added.length}, Skipped: ${skipped.length}, Not found: ${notFound.length}${failed.length > 0 ? `, Failed: ${failed.length}` : ""}`
+    ];
+    if (added.length > 0) {
+      lines.push("\n\u2705 **Added:**");
+      for (const s of added)
+        lines.push(`  - ${s.name} *(${s.packLabel}, item \`${s.itemId}\`)*`);
+    }
+    if (skipped.length > 0) {
+      lines.push("\n\u23ED\uFE0F **Skipped:**");
+      for (const s of skipped)
+        lines.push(`  - ${s.name} \u2014 *${s.reason}*`);
+    }
+    if (notFound.length > 0) {
+      lines.push("\n\u274C **Not found in compendium:**");
+      for (const name of notFound)
+        lines.push(`  - ${name}`);
+    }
+    if (failed.length > 0) {
+      lines.push("\n\u26A0\uFE0F **Failed during import:**");
+      for (const f of failed)
+        lines.push(`  - ${f.name} \u2014 *${f.error}*`);
+    }
+    if (warnings.length > 0) {
+      lines.push("\n\u26A0\uFE0F **Warnings:**");
+      for (const w of warnings)
+        lines.push(`  - ${w}`);
+    }
+    return {
+      summary,
+      success: added.length > 0 || notFound.length === 0 && failed.length === 0,
+      actor: result.actor,
+      added,
+      skipped,
+      notFound,
+      failed,
+      warnings,
+      message: `${summary}
+
+${lines.join("\n")}`
+    };
+  }
+};
+
+// dist/tools/dnd5e/npc.js
+init_zod();
+var DAMAGE_CANONICAL2 = /* @__PURE__ */ new Set([
+  "acid",
+  "bludgeoning",
+  "cold",
+  "fire",
+  "force",
+  "lightning",
+  "necrotic",
+  "piercing",
+  "poison",
+  "psychic",
+  "radiant",
+  "slashing",
+  "thunder"
+]);
+var CONDITION_CANONICAL = /* @__PURE__ */ new Set([
+  "blinded",
+  "charmed",
+  "deafened",
+  "exhaustion",
+  "frightened",
+  "grappled",
+  "incapacitated",
+  "invisible",
+  "paralyzed",
+  "petrified",
+  "poisoned",
+  "prone",
+  "restrained",
+  "stunned",
+  "unconscious"
+]);
+function normalizeCR(input) {
+  if (typeof input === "number")
+    return input;
+  if (input.includes("/")) {
+    const [num, den] = input.split("/").map(Number);
+    return num / den;
+  }
+  return parseInt(input, 10);
+}
+function formatCR(value) {
+  if (value === 0)
+    return "0";
+  if (value === 0.125)
+    return "1/8";
+  if (value === 0.25)
+    return "1/4";
+  if (value === 0.5)
+    return "1/2";
+  return String(Math.round(value));
+}
+var DnD5eNpcTools = class {
+  foundryClient;
+  logger;
+  errorHandler;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "DnD5eNpcTools" });
+    this.errorHandler = new ErrorHandler(this.logger);
+  }
+  getToolDefinitions() {
+    return [
+      {
+        name: "dnd5e-create-npc",
+        description: '[D&D 5e only] Create a new NPC actor from scratch with a full Level-2 stat block: identity (name, type, size, alignment, CR), ability scores, saving throw proficiencies, HP (average + formula), AC (default or flat), movement speeds, senses, skill proficiencies, damage immunities/resistances/vulnerabilities, condition immunities, languages, and biography. Items, actions, features, and spells are NOT added by this tool \u2014 use dnd5e-add-feature (featureType: "passive", "save", "attack", "attack-with-save", "aura", "spellcasting", or "spells") to add them after creation. The actor is placed in the "Foundry MCP Creatures" folder.',
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Name of the NPC"
+            },
+            creatureType: {
+              type: "string",
+              enum: [
+                "humanoid",
+                "undead",
+                "beast",
+                "dragon",
+                "aberration",
+                "construct",
+                "elemental",
+                "fey",
+                "fiend",
+                "giant",
+                "monstrosity",
+                "ooze",
+                "plant",
+                "celestial",
+                "swarm"
+              ],
+              description: "Creature type"
+            },
+            creatureSubtype: {
+              type: "string",
+              description: 'Optional subtype (e.g. "Goblinoid", "Shapechanger")',
+              default: ""
+            },
+            size: {
+              type: "string",
+              enum: ["tiny", "small", "medium", "large", "huge", "gargantuan"],
+              description: "Creature size"
+            },
+            alignment: {
+              type: "string",
+              description: 'Alignment string (e.g. "Neutral Evil", "Chaotic Good")',
+              default: ""
+            },
+            cr: {
+              description: 'Challenge Rating \u2014 whole number (0, 1, 5), fraction string ("1/8", "1/4", "1/2"), or decimal number (0.25, 0.5)',
+              oneOf: [
+                { type: "string", pattern: "^\\d+(\\/[248])?$" },
+                { type: "number", minimum: 0 }
+              ]
+            },
+            hpAverage: {
+              type: "number",
+              description: "Average (fixed) hit points",
+              minimum: 1
+            },
+            hpFormula: {
+              type: "string",
+              description: 'Hit dice formula used for re-rolls (e.g. "2d6", "3d8+9")'
+            },
+            acMode: {
+              type: "string",
+              enum: ["default", "flat"],
+              description: '"default" \u2014 Foundry calculates AC from equipped items and abilities; "flat" \u2014 set a fixed AC value via acValue'
+            },
+            acValue: {
+              type: "number",
+              description: 'Fixed AC value (0\u201330). Required when acMode is "flat".',
+              minimum: 0,
+              maximum: 30
+            },
+            abilities: {
+              type: "object",
+              description: "The six ability scores (1\u201330 each)",
+              properties: {
+                str: { type: "number", minimum: 1, maximum: 30 },
+                dex: { type: "number", minimum: 1, maximum: 30 },
+                con: { type: "number", minimum: 1, maximum: 30 },
+                int: { type: "number", minimum: 1, maximum: 30 },
+                wis: { type: "number", minimum: 1, maximum: 30 },
+                cha: { type: "number", minimum: 1, maximum: 30 }
+              },
+              required: ["str", "dex", "con", "int", "wis", "cha"]
+            },
+            savingThrows: {
+              type: "array",
+              description: "Abilities with saving throw proficiency",
+              items: {
+                type: "string",
+                enum: ["str", "dex", "con", "int", "wis", "cha"]
+              },
+              default: []
+            },
+            walkSpeed: {
+              type: "number",
+              description: "Walk speed in feet",
+              minimum: 0,
+              default: 30
+            },
+            flySpeed: {
+              type: "number",
+              description: "Fly speed in feet",
+              minimum: 0,
+              default: 0
+            },
+            swimSpeed: {
+              type: "number",
+              description: "Swim speed in feet",
+              minimum: 0,
+              default: 0
+            },
+            climbSpeed: {
+              type: "number",
+              description: "Climb speed in feet",
+              minimum: 0,
+              default: 0
+            },
+            burrowSpeed: {
+              type: "number",
+              description: "Burrow speed in feet",
+              minimum: 0,
+              default: 0
+            },
+            hover: {
+              type: "boolean",
+              description: "Whether the creature hovers (cannot fall)",
+              default: false
+            },
+            darkvision: {
+              type: "number",
+              description: "Darkvision range in feet",
+              minimum: 0,
+              default: 0
+            },
+            blindsight: {
+              type: "number",
+              description: "Blindsight range in feet",
+              minimum: 0,
+              default: 0
+            },
+            tremorsense: {
+              type: "number",
+              description: "Tremorsense range in feet",
+              minimum: 0,
+              default: 0
+            },
+            truesight: {
+              type: "number",
+              description: "Truesight range in feet",
+              minimum: 0,
+              default: 0
+            },
+            specialSenses: {
+              type: "string",
+              description: "Any additional senses not covered by the standard fields",
+              default: ""
+            },
+            skills: {
+              type: "array",
+              description: "Skills with proficiency or expertise",
+              items: {
+                type: "object",
+                properties: {
+                  skill: {
+                    type: "string",
+                    enum: [
+                      "Acrobatics",
+                      "Animal Handling",
+                      "Arcana",
+                      "Athletics",
+                      "Deception",
+                      "History",
+                      "Insight",
+                      "Intimidation",
+                      "Investigation",
+                      "Medicine",
+                      "Nature",
+                      "Perception",
+                      "Performance",
+                      "Persuasion",
+                      "Religion",
+                      "Sleight of Hand",
+                      "Stealth",
+                      "Survival"
+                    ]
+                  },
+                  proficiency: {
+                    type: "string",
+                    enum: ["proficient", "expert"],
+                    description: '"proficient" = proficiency bonus once; "expert" = double proficiency'
+                  }
+                },
+                required: ["skill", "proficiency"]
+              },
+              default: []
+            },
+            damageImmunities: {
+              type: "array",
+              description: 'Damage types the creature is immune to (e.g. ["necrotic", "poison"]). Canonical values: acid, bludgeoning, cold, fire, force, lightning, necrotic, piercing, poison, psychic, radiant, slashing, thunder. Non-canonical values are accepted with a warning.',
+              items: { type: "string" },
+              default: []
+            },
+            damageResistances: {
+              type: "array",
+              description: "Damage types the creature is resistant to. Same canonical set as damageImmunities.",
+              items: { type: "string" },
+              default: []
+            },
+            damageVulnerabilities: {
+              type: "array",
+              description: "Damage types the creature is vulnerable to. Same canonical set as damageImmunities.",
+              items: { type: "string" },
+              default: []
+            },
+            conditionImmunities: {
+              type: "array",
+              description: 'Conditions the creature is immune to (e.g. ["charmed", "frightened"]). Canonical values: blinded, charmed, deafened, exhaustion, frightened, grappled, incapacitated, invisible, paralyzed, petrified, poisoned, prone, restrained, stunned, unconscious. Non-canonical values are accepted with a warning.',
+              items: { type: "string" },
+              default: []
+            },
+            languages: {
+              type: "array",
+              description: 'Languages the creature speaks (e.g. ["Common", "Goblin"])',
+              items: { type: "string" },
+              default: []
+            },
+            languagesCustom: {
+              type: "string",
+              description: 'Free-text language note (e.g. "telepathy 60 ft.")',
+              default: ""
+            },
+            biography: {
+              type: "string",
+              description: "HTML biography text shown in the character sheet",
+              default: ""
+            },
+            sourceBook: {
+              type: "string",
+              description: `Source book abbreviation (e.g. "MM'14", "VGM")`,
+              default: ""
+            },
+            sourcePage: {
+              type: "string",
+              description: "Page number in the source book",
+              default: ""
+            },
+            sourceRules: {
+              type: "string",
+              enum: ["2014", "2024"],
+              description: "Rules edition",
+              default: "2014"
+            }
+          },
+          required: [
+            "name",
+            "creatureType",
+            "size",
+            "cr",
+            "abilities",
+            "hpAverage",
+            "hpFormula",
+            "acMode"
+          ]
+        }
+      }
+    ];
+  }
+  async handleCreateNpc(args) {
+    const schema2 = external_exports.object({
+      name: external_exports.string().min(1, "name cannot be empty"),
+      creatureType: external_exports.enum([
+        "humanoid",
+        "undead",
+        "beast",
+        "dragon",
+        "aberration",
+        "construct",
+        "elemental",
+        "fey",
+        "fiend",
+        "giant",
+        "monstrosity",
+        "ooze",
+        "plant",
+        "celestial",
+        "swarm"
+      ]),
+      creatureSubtype: external_exports.string().default(""),
+      size: external_exports.enum(["tiny", "small", "medium", "large", "huge", "gargantuan"]),
+      alignment: external_exports.string().default(""),
+      cr: external_exports.union([
+        external_exports.string().regex(/^\d+(\/[248])?$/, 'CR must be a whole number or fraction string (e.g. "0", "1/4", "1/2", "5")'),
+        external_exports.number().finite().min(0)
+      ]),
+      hpAverage: external_exports.number().int().min(1),
+      hpFormula: external_exports.string().min(1, "hpFormula cannot be empty"),
+      acMode: external_exports.enum(["default", "flat"]),
+      acValue: external_exports.number().int().min(0).max(30).optional(),
+      abilities: external_exports.object({
+        str: external_exports.number().int().min(1).max(30),
+        dex: external_exports.number().int().min(1).max(30),
+        con: external_exports.number().int().min(1).max(30),
+        int: external_exports.number().int().min(1).max(30),
+        wis: external_exports.number().int().min(1).max(30),
+        cha: external_exports.number().int().min(1).max(30)
+      }),
+      savingThrows: external_exports.array(external_exports.enum(["str", "dex", "con", "int", "wis", "cha"])).default([]),
+      walkSpeed: external_exports.number().int().min(0).default(30),
+      flySpeed: external_exports.number().int().min(0).default(0),
+      swimSpeed: external_exports.number().int().min(0).default(0),
+      climbSpeed: external_exports.number().int().min(0).default(0),
+      burrowSpeed: external_exports.number().int().min(0).default(0),
+      hover: external_exports.boolean().default(false),
+      darkvision: external_exports.number().int().min(0).default(0),
+      blindsight: external_exports.number().int().min(0).default(0),
+      tremorsense: external_exports.number().int().min(0).default(0),
+      truesight: external_exports.number().int().min(0).default(0),
+      specialSenses: external_exports.string().default(""),
+      skills: external_exports.array(external_exports.object({
+        skill: external_exports.enum([
+          "Acrobatics",
+          "Animal Handling",
+          "Arcana",
+          "Athletics",
+          "Deception",
+          "History",
+          "Insight",
+          "Intimidation",
+          "Investigation",
+          "Medicine",
+          "Nature",
+          "Perception",
+          "Performance",
+          "Persuasion",
+          "Religion",
+          "Sleight of Hand",
+          "Stealth",
+          "Survival"
+        ]),
+        proficiency: external_exports.enum(["proficient", "expert"])
+      })).default([]),
+      damageImmunities: external_exports.array(external_exports.string()).default([]),
+      damageResistances: external_exports.array(external_exports.string()).default([]),
+      damageVulnerabilities: external_exports.array(external_exports.string()).default([]),
+      conditionImmunities: external_exports.array(external_exports.string()).default([]),
+      languages: external_exports.array(external_exports.string()).default([]),
+      languagesCustom: external_exports.string().default(""),
+      biography: external_exports.string().default(""),
+      sourceBook: external_exports.string().default(""),
+      sourcePage: external_exports.string().default(""),
+      sourceRules: external_exports.enum(["2014", "2024"]).default("2014")
+    }).superRefine((data, ctx) => {
+      if (data.acMode === "flat" && data.acValue === void 0) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          path: ["acValue"],
+          message: 'acValue is required when acMode is "flat"'
+        });
+      }
+    });
+    const parsed = schema2.parse(args);
+    const warnings = [];
+    const allDamageValues = [
+      ...parsed.damageImmunities.map((v) => ({ field: "damageImmunities", value: v })),
+      ...parsed.damageResistances.map((v) => ({ field: "damageResistances", value: v })),
+      ...parsed.damageVulnerabilities.map((v) => ({ field: "damageVulnerabilities", value: v }))
+    ];
+    for (const { field, value } of allDamageValues) {
+      if (!DAMAGE_CANONICAL2.has(value)) {
+        const msg = `Unknown damage type "${value}" in ${field} \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { field, value });
+      }
+    }
+    for (const value of parsed.conditionImmunities) {
+      if (!CONDITION_CANONICAL.has(value)) {
+        const msg = `Unknown condition "${value}" in conditionImmunities \u2014 verify it matches dnd5e system values`;
+        warnings.push(msg);
+        this.logger.warn(msg, { value });
+      }
+    }
+    this.logger.info("Creating D&D 5e NPC", {
+      name: parsed.name,
+      creatureType: parsed.creatureType,
+      cr: parsed.cr,
+      warnings: warnings.length
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-create-npc requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.createNpcActor", parsed);
+      this.logger.info("NPC created successfully", {
+        actorId: result.actor?.id,
+        actorName: result.actor?.name
+      });
+      return this.formatResponse(result, parsed, warnings);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-create-npc", "NPC creation");
+    }
+  }
+  formatResponse(result, params, warnings) {
+    const crStr = result.actor?.cr ?? formatCR(normalizeCR(params.cr));
+    const abilityLine = ["str", "dex", "con", "int", "wis", "cha"].map((ab) => `${ab.toUpperCase()} ${params.abilities[ab]}`).join(" / ");
+    const acDisplay = params.acMode === "flat" ? String(params.acValue) : "default (calculated)";
+    const summary = `\u2705 NPC "${result.actor.name}" created (CR ${crStr})`;
+    const lines = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Type:** ${params.creatureType}${params.creatureSubtype ? ` (${params.creatureSubtype})` : ""}, ${params.size}`,
+      `**CR:** ${crStr}  |  **HP:** ${params.hpAverage} (${params.hpFormula})  |  **AC:** ${acDisplay}`,
+      `**Abilities:** ${abilityLine}`
+    ];
+    if (result.actor.folder) {
+      lines.push(`**Folder:** ${result.actor.folder}`);
+    }
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      actor: result.actor,
+      warnings,
+      message: `${summary}
+
+${lines.join("\n")}${warningSection}`
+    };
   }
 };
 
@@ -109198,13 +110851,13 @@ var usesSchema = external_exports.object({
 }).refine((uses) => uses.value <= uses.max, {
   message: "uses.value must be less than or equal to uses.max"
 });
-var damagePartSchema = external_exports.object({
+var damagePartSchema2 = external_exports.object({
   number: external_exports.number().int().positive(),
   denomination: external_exports.number().int().nonnegative(),
   bonus: external_exports.string().optional().default(""),
   types: external_exports.array(external_exports.string()).min(1)
 });
-var healingSchema = damagePartSchema.omit({ types: true }).extend({
+var healingSchema = damagePartSchema2.omit({ types: true }).extend({
   types: external_exports.array(external_exports.string()).optional().default([])
 });
 var activitySchema = external_exports.object({
@@ -109229,7 +110882,7 @@ var activitySchema = external_exports.object({
     dc: external_exports.union([external_exports.number(), external_exports.string()]),
     onSave: external_exports.enum(["half", "none", "full"]).optional().default("half")
   }).optional(),
-  damageParts: external_exports.array(damagePartSchema).optional(),
+  damageParts: external_exports.array(damagePartSchema2).optional(),
   healing: healingSchema.optional(),
   roll: external_exports.object({ formula: external_exports.string(), name: external_exports.string().optional() }).optional()
 }).refine((a) => a.type !== "attack" || !!a.attack, { message: "attack activities require an `attack` block" }).refine((a) => a.type !== "save" || !!a.save, { message: "save activities require a `save` block" }).refine((a) => a.type !== "heal" || !!a.healing, { message: "heal activities require a `healing` block" }).refine((a) => a.type !== "utility" || !!a.roll, { message: "utility activities require a `roll` block" }).refine((a) => a.type !== "damage" || !!a.damageParts?.length, { message: "damage activities require `damageParts`" });
@@ -113344,6 +114997,9 @@ async function startBackend() {
   const sceneTools = new SceneTools({ foundryClient, logger });
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
   const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
+  const worldItemsTools = new WorldItemsTools({ foundryClient, logger });
+  const dnd5eAddFeatureTool = new DnD5eAddFeatureTool({ foundryClient, logger });
+  const dnd5eNpcTools = new DnD5eNpcTools({ foundryClient, logger });
   const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
   const itemImportTools = new ItemImportTools({ foundryClient, logger });
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
@@ -113479,6 +115135,9 @@ async function startBackend() {
     ...sceneTools.getToolDefinitions(),
     ...actorCreationTools.getToolDefinitions(),
     ...actorManagementTools.getToolDefinitions(),
+    ...worldItemsTools.getToolDefinitions(),
+    ...dnd5eAddFeatureTool.getToolDefinitions(),
+    ...dnd5eNpcTools.getToolDefinitions(),
     ...creatureImportTools.getToolDefinitions(),
     ...dsa5CharacterCreator.getToolDefinitions(),
     ...questCreationTools.getToolDefinitions(),
@@ -113573,6 +115232,15 @@ async function startBackend() {
                   break;
                 case "manage-actors":
                   result = await actorManagementTools.handleManageActors(args);
+                  break;
+                case "manage-world-items":
+                  result = await worldItemsTools.handleManageWorldItems(args);
+                  break;
+                case "dnd5e-add-feature":
+                  result = await dnd5eAddFeatureTool.handleAddFeature(args);
+                  break;
+                case "dnd5e-create-npc":
+                  result = await dnd5eNpcTools.handleCreateNpc(args);
                   break;
                 case "create-dsa5-character-from-archetype":
                   result = await dsa5CharacterCreator.handleCreateCharacterFromArchetype(args);

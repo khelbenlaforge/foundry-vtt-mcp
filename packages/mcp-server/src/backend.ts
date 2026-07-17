@@ -23,6 +23,8 @@ import { SceneTools } from './tools/scene.js';
 import { ActorCreationTools } from './tools/actor-creation.js';
 import { ActorManagementTools } from './tools/actor-management.js';
 import { WorldItemsTools } from './tools/world-items.js';
+import { DnD5eAddFeatureTool } from './tools/dnd5e/add-feature.js';
+import { DnD5eNpcTools } from './tools/dnd5e/npc.js';
 
 import { CreatureImportTools } from './tools/creature-import.js';
 import { ItemImportTools } from './tools/item-import.js';
@@ -1072,6 +1074,8 @@ async function startBackend(): Promise<void> {
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
   const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
   const worldItemsTools = new WorldItemsTools({ foundryClient, logger });
+  const dnd5eAddFeatureTool = new DnD5eAddFeatureTool({ foundryClient, logger });
+  const dnd5eNpcTools = new DnD5eNpcTools({ foundryClient, logger });
 
   const creatureImportTools = new CreatureImportTools({ foundryClient, logger });
   const itemImportTools = new ItemImportTools({ foundryClient, logger });
@@ -1308,6 +1312,8 @@ async function startBackend(): Promise<void> {
     ...actorCreationTools.getToolDefinitions(),
     ...actorManagementTools.getToolDefinitions(),
     ...worldItemsTools.getToolDefinitions(),
+    ...dnd5eAddFeatureTool.getToolDefinitions(),
+    ...dnd5eNpcTools.getToolDefinitions(),
 
     ...creatureImportTools.getToolDefinitions(),
 
@@ -1513,6 +1519,18 @@ async function startBackend(): Promise<void> {
                 case 'manage-world-items':
 
                   result = await worldItemsTools.handleManageWorldItems(args);
+
+                  break;
+
+                case 'dnd5e-add-feature':
+
+                  result = await dnd5eAddFeatureTool.handleAddFeature(args);
+
+                  break;
+
+                case 'dnd5e-create-npc':
+
+                  result = await dnd5eNpcTools.handleCreateNpc(args);
 
                   break;
 

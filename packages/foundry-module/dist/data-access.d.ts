@@ -922,6 +922,76 @@ export declare class FoundryDataAccess {
             type: string;
         }>;
     }>;
+    addSaveFeatureToActor(data: {
+        actorIdentifier: string;
+        featureName: string;
+        description: string;
+        activationType: string;
+        saveAbility: string;
+        saveDC: number;
+        damageParts: Array<{
+            number: number;
+            denomination: number;
+            type: string;
+        }>;
+        halfOnSave: boolean;
+        areaType: string;
+        areaSize?: number;
+        areaUnits: string;
+        affectsType: string;
+    }): Promise<any>;
+    createNpcActor(data: {
+        name: string;
+        creatureType: string;
+        creatureSubtype: string;
+        size: string;
+        alignment: string;
+        cr: string | number;
+        hpAverage: number;
+        hpFormula: string;
+        acMode: string;
+        acValue?: number;
+        abilities: {
+            str: number;
+            dex: number;
+            con: number;
+            int: number;
+            wis: number;
+            cha: number;
+        };
+        savingThrows: string[];
+        walkSpeed: number;
+        flySpeed: number;
+        swimSpeed: number;
+        climbSpeed: number;
+        burrowSpeed: number;
+        hover: boolean;
+        darkvision: number;
+        blindsight: number;
+        tremorsense: number;
+        truesight: number;
+        specialSenses: string;
+        skills: Array<{
+            skill: string;
+            proficiency: string;
+        }>;
+        damageImmunities: string[];
+        damageResistances: string[];
+        damageVulnerabilities: string[];
+        conditionImmunities: string[];
+        languages: string[];
+        languagesCustom: string;
+        biography: string;
+        sourceBook: string;
+        sourcePage: string;
+        sourceRules: string;
+    }): Promise<any>;
+    addAttackToActor(data: any): Promise<any>;
+    addAuraToActor(data: any): Promise<any>;
+    addPassiveFeatureToActor(data: any): Promise<any>;
+    addAttackWithSaveToActor(data: any): Promise<any>;
+    setActorSpellcasting(data: any): Promise<any>;
+    addSpellsToActor(data: any): Promise<any>;
     /**
      * Delete one or more actors by ID.
      */
