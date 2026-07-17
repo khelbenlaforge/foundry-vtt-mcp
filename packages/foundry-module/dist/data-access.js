@@ -918,7 +918,7 @@ export class FoundryDataAccess {
             // Spell-specific fields
             if (item.type === 'spell') {
                 result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
-                result.prepared = itemSystem?.preparation?.prepared ?? itemSystem?.location?.prepared;
+                result.prepared = itemSystem?.prepared ?? itemSystem?.location?.prepared;
                 result.expended = itemSystem?.location?.expended;
                 // Get targeting info
                 if (systemId === 'pf2e') {
@@ -1185,7 +1185,7 @@ export class FoundryDataAccess {
                     id: spell.id || '',
                     name: spell.name || '',
                     level: spellSystem?.level || 0,
-                    prepared: spellSystem?.preparation?.prepared ?? true,
+                    prepared: spellSystem?.prepared ?? true,
                     traits: [], // D&D 5e doesn't use traits the same way
                     actionCost: spellSystem?.activation?.type || undefined,
                     range: targeting.range,
@@ -1219,7 +1219,7 @@ export class FoundryDataAccess {
                         id: spell.id || '',
                         name: spell.name || '',
                         level: spellSystem?.level || 0,
-                        prepared: spellSystem?.preparation?.prepared ?? true,
+                        prepared: spellSystem?.prepared ?? true,
                         actionCost: spellSystem?.activation?.type || undefined,
                         range: targeting.range,
                         target: targeting.target,
@@ -2302,7 +2302,11 @@ export class FoundryDataAccess {
             }
             // Create a new sanitized object
             const sanitized = {};
-            for (const [key, value] of Object.entries(obj)) {
+            // Use Object.keys (not Object.entries) so skipped keys are never
+            // read — deprecated getters (e.g. senses.truesight, item.preparation)
+            // fire their compatibility warning on access alone, and Object.entries
+            // evaluates every value up front even for keys we then discard.
+            for (const key of Object.keys(obj)) {
                 // Skip sensitive and problematic fields entirely
                 if (this.isSensitiveOrProblematicField(key)) {
                     continue;
@@ -2312,7 +2316,7 @@ export class FoundryDataAccess {
                     continue;
                 }
                 // Recursively sanitize the value
-                sanitized[key] = this.removeSensitiveFields(value, visited, depth + 1);
+                sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
             }
             return sanitized;
         }
@@ -2333,9 +2337,11 @@ export class FoundryDataAccess {
             'parent', '_parent', 'collection', 'apps', 'document', '_document',
             'constructor', 'prototype', '__proto__', 'valueOf', 'toString'
         ];
-        // Skip deprecated ability save properties that trigger warnings
+        // Skip deprecated properties that trigger dnd5e compatibility warnings on access
         const deprecatedKeys = [
-            'save' // Skip the deprecated 'save' property on abilities
+            'save', // deprecated 'save' property on abilities
+            'preparation', // dnd5e 5.1+: moved to SpellData#prepared / #method
+            'truesight', 'darkvision', 'blindsight', 'tremorsense' // dnd5e 5.3+: moved to senses.ranges.*
         ];
         return sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key);
     }
