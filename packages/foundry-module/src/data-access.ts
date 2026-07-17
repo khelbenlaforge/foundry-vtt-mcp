@@ -1172,8 +1172,10 @@ export class FoundryDataAccess {
         disabled: (effect as any).disabled,
         ...(((effect as any).duration) ? {
           duration: {
-            type: (effect as any).duration.type || 'none',
-            duration: (effect as any).duration.duration,
+            // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
+            // (deprecated since v14, removed in v16); prefer the new names, fall back for v13.
+            type: (effect as any).duration.units ?? (effect as any).duration.type ?? 'none',
+            duration: (effect as any).duration.seconds ?? (effect as any).duration.duration,
             remaining: (effect as any).duration.remaining,
           }
         } : {}),
