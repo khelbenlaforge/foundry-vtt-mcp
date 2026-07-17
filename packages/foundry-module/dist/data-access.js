@@ -767,21 +767,27 @@ export class FoundryDataAccess {
                     system: this.sanitizeData(item.system, item.type === 'spell' ? 'spellSystem' : undefined),
                 };
             }),
-            effects: actor.effects.map(effect => ({
-                id: effect.id,
-                name: effect.name || effect.label || 'Unknown Effect',
-                ...(effect.icon ? { icon: effect.icon } : {}),
-                disabled: effect.disabled,
-                ...((effect.duration) ? {
-                    duration: {
-                        // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
-                        // (deprecated since v14, removed in v16); prefer the new names, fall back for v13.
-                        type: effect.duration.units ?? effect.duration.type ?? 'none',
-                        duration: effect.duration.seconds ?? effect.duration.duration,
-                        remaining: effect.duration.remaining,
-                    }
-                } : {}),
-            })),
+            effects: actor.effects.map(effect => {
+                const eff = effect;
+                const dur = eff.duration;
+                // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
+                // (deprecated since v14, removed in v16). Fall back to the raw _source value
+                // (not the live getter) so a v13 document never triggers the deprecation warning.
+                const durRaw = eff._source?.duration;
+                return {
+                    id: effect.id,
+                    name: eff.name || eff.label || 'Unknown Effect',
+                    ...(eff.icon ? { icon: eff.icon } : {}),
+                    disabled: eff.disabled,
+                    ...(dur ? {
+                        duration: {
+                            type: dur.units ?? durRaw?.type ?? 'none',
+                            duration: dur.seconds ?? durRaw?.duration,
+                            remaining: dur.remaining,
+                        }
+                    } : {}),
+                };
+            }),
         };
         // Add PF2e-specific data if available
         const actorAny = actor;
@@ -920,7 +926,10 @@ export class FoundryDataAccess {
             // Spell-specific fields
             if (item.type === 'spell') {
                 result.level = itemSystem?.level?.value ?? itemSystem?.level ?? itemSystem?.rank ?? 0;
-                result.prepared = itemSystem?.prepared ?? itemSystem?.location?.prepared;
+                // Raw-source fallback (not the live deprecated getter) for older dnd5e
+                // documents that only have the pre-5.1 preparation.prepared shape.
+                const itemRaw = item._source?.system;
+                result.prepared = itemSystem?.prepared ?? itemRaw?.preparation?.prepared ?? itemSystem?.location?.prepared;
                 result.expended = itemSystem?.location?.expended;
                 // Get targeting info
                 if (systemId === 'pf2e') {
@@ -1178,7 +1187,14 @@ export class FoundryDataAccess {
             const spellsByClass = {};
             for (const spell of spellItems) {
                 const spellSystem = spell.system;
-                const sourceClass = spellSystem?.sourceItem || 'general';
+                // sourceItem is a UUID string in modern dnd5e, but can be an object
+                // reference on some documents — normalize to an id/identifier string
+                // so it's never used as a record key directly (which would silently
+                // stringify to "[object Object]" and break the class lookup below).
+                const sourceItem = spellSystem?.sourceItem;
+                const sourceClass = (sourceItem
+                    ? (typeof sourceItem === 'string' ? sourceItem : (sourceItem.identifier || sourceItem.id))
+                    : spellSystem?.sourceClass) || 'general';
                 if (!spellsByClass[sourceClass]) {
                     spellsByClass[sourceClass] = [];
                 }
@@ -2194,7 +2210,8 @@ export class FoundryDataAccess {
             id: scene.id,
             name: scene.name,
             img: scene.img || undefined,
-            background: scene.background?.src || undefined,
+            // Foundry v14 deprecated the live scene.background getter; read raw _source instead.
+            background: scene._source?.background?.src || undefined,
             width: scene.width,
             height: scene.height,
             padding: scene.padding,
@@ -2313,8 +2330,12 @@ export class FoundryDataAccess {
                 if (this.isSensitiveOrProblematicField(key, parentKey, context)) {
                     continue;
                 }
-                // Skip most private properties except essential ones
-                if (key.startsWith('_') && !['_id', '_stats', '_source'].includes(key)) {
+                // Skip most private properties except essential ones. _stats (Foundry
+                // document audit metadata) and _source (raw stored data duplicate) are
+                // bloat in tool output and nothing downstream reads them from this
+                // sanitized result — the raw-fallback fixes above read _source off the
+                // live document directly, before sanitizeData runs. Keep only _id.
+                if (key.startsWith('_') && key !== '_id') {
                     continue;
                 }
                 // Recursively sanitize the value
@@ -2337,7 +2358,10 @@ export class FoundryDataAccess {
         ];
         const problematicKeys = [
             'parent', '_parent', 'collection', 'apps', 'document', '_document',
-            'constructor', 'prototype', '__proto__', 'valueOf', 'toString'
+            'constructor', 'prototype', '__proto__', 'valueOf', 'toString',
+            // dnd5e item leveling metadata; full of cycles back to the actor and other items.
+            // Not gameplay-relevant for LLM consumers.
+            'advancement'
         ];
         // 'save' deprecation (ability.save) is not scoped by parent — the field
         // only ever appears on ability-score objects, so a bare key match is safe.
@@ -4083,7 +4107,7 @@ export class FoundryDataAccess {
                     height: scene.dimensions?.height || scene.height || 0
                 },
                 gridSize: scene.grid?.size || 100,
-                background: scene.background?.src || scene.img || '',
+                background: scene._source?.background?.src || scene.img || '',
                 walls: scene.walls?.size || 0,
                 tokens: scene.tokens?.size || 0,
                 lighting: scene.lights?.size || 0,
