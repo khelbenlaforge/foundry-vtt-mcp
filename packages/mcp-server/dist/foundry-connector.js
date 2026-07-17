@@ -307,7 +307,7 @@ export class FoundryConnector {
             const timeout = setTimeout(() => {
                 this.pendingQueries.delete(queryId);
                 reject(new Error(`Query timeout: ${method}`));
-            }, 10000); // 10 second timeout
+            }, 30000); // 30 second timeout
             this.pendingQueries.set(queryId, { resolve, reject, timeout });
             const message = {
                 type: 'mcp-query',

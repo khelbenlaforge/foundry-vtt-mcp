@@ -764,7 +764,7 @@ export class FoundryDataAccess {
                     name: item.name,
                     type: item.type,
                     ...(item.img ? { img: item.img } : {}),
-                    system: this.sanitizeData(item.system),
+                    system: this.sanitizeData(item.system, item.type === 'spell' ? 'spellSystem' : undefined),
                 };
             }),
             effects: actor.effects.map(effect => ({
@@ -2258,7 +2258,7 @@ export class FoundryDataAccess {
     /**
      * Sanitize data to remove sensitive information and make it JSON-safe
      */
-    sanitizeData(data) {
+    sanitizeData(data, context) {
         if (data === null || data === undefined) {
             return data;
         }
@@ -2267,7 +2267,7 @@ export class FoundryDataAccess {
         }
         try {
             // removeSensitiveFields now returns a sanitized copy
-            const sanitized = this.removeSensitiveFields(data);
+            const sanitized = this.removeSensitiveFields(data, new WeakSet(), 0, undefined, context);
             // Use custom JSON serializer to avoid deprecated property warnings
             const jsonString = this.safeJSONStringify(sanitized);
             return JSON.parse(jsonString);
@@ -2281,7 +2281,7 @@ export class FoundryDataAccess {
      * Remove sensitive fields from data object with circular reference protection
      * Returns a sanitized copy instead of modifying the original
      */
-    removeSensitiveFields(obj, visited = new WeakSet(), depth = 0) {
+    removeSensitiveFields(obj, visited = new WeakSet(), depth = 0, parentKey, context) {
         // Handle primitives
         if (obj === null || typeof obj !== 'object') {
             return obj;
@@ -2300,7 +2300,7 @@ export class FoundryDataAccess {
         try {
             // Handle arrays
             if (Array.isArray(obj)) {
-                return obj.map(item => this.removeSensitiveFields(item, visited, depth + 1));
+                return obj.map(item => this.removeSensitiveFields(item, visited, depth + 1, parentKey, context));
             }
             // Create a new sanitized object
             const sanitized = {};
@@ -2310,7 +2310,7 @@ export class FoundryDataAccess {
             // evaluates every value up front even for keys we then discard.
             for (const key of Object.keys(obj)) {
                 // Skip sensitive and problematic fields entirely
-                if (this.isSensitiveOrProblematicField(key)) {
+                if (this.isSensitiveOrProblematicField(key, parentKey, context)) {
                     continue;
                 }
                 // Skip most private properties except essential ones
@@ -2318,7 +2318,7 @@ export class FoundryDataAccess {
                     continue;
                 }
                 // Recursively sanitize the value
-                sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
+                sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1, key, context);
             }
             return sanitized;
         }
@@ -2330,7 +2330,7 @@ export class FoundryDataAccess {
     /**
      * Check if a field should be excluded from sanitized output
      */
-    isSensitiveOrProblematicField(key) {
+    isSensitiveOrProblematicField(key, parentKey, context) {
         const sensitiveKeys = [
             'password', 'token', 'secret', 'key', 'auth',
             'credential', 'session', 'cookie', 'private'
@@ -2339,13 +2339,27 @@ export class FoundryDataAccess {
             'parent', '_parent', 'collection', 'apps', 'document', '_document',
             'constructor', 'prototype', '__proto__', 'valueOf', 'toString'
         ];
-        // Skip deprecated properties that trigger dnd5e compatibility warnings on access
-        const deprecatedKeys = [
-            'save', // deprecated 'save' property on abilities
-            'preparation', // dnd5e 5.1+: moved to SpellData#prepared / #method
-            'truesight', 'darkvision', 'blindsight', 'tremorsense' // dnd5e 5.3+: moved to senses.ranges.*
-        ];
-        return sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key);
+        // 'save' deprecation (ability.save) is not scoped by parent — the field
+        // only ever appears on ability-score objects, so a bare key match is safe.
+        if (key === 'save') {
+            return true;
+        }
+        // dnd5e 5.3+: senses.truesight/darkvision/blindsight/tremorsense moved to
+        // senses.ranges.*. These only exist as getters directly on a `senses`
+        // object, so only skip them there — a bare key match would also drop any
+        // unrelated field that happens to share one of these names elsewhere.
+        const senseKeys = ['truesight', 'darkvision', 'blindsight', 'tremorsense'];
+        if (parentKey === 'senses' && senseKeys.includes(key)) {
+            return true;
+        }
+        // dnd5e 5.1+: SpellData#preparation moved to #prepared / #method. Only
+        // exists as a getter on a spell item's system object, so gate it on the
+        // caller having explicitly flagged that context (see sanitizeData callers)
+        // rather than matching the bare key everywhere.
+        if (context === 'spellSystem' && key === 'preparation') {
+            return true;
+        }
+        return sensitiveKeys.includes(key) || problematicKeys.includes(key);
     }
     /**
      * Custom JSON serializer that handles Foundry objects safely
@@ -2853,7 +2867,7 @@ export class FoundryDataAccess {
             img: document.img || undefined,
             pack: packId,
             packLabel: pack.metadata.label,
-            system: this.sanitizeData(document.system || {}),
+            system: this.sanitizeData(document.system || {}, document.type === 'spell' ? 'spellSystem' : undefined),
             fullData: this.sanitizeData(document.toObject()),
         };
         // Add items if the actor has them
@@ -2863,7 +2877,7 @@ export class FoundryDataAccess {
                 name: item.name,
                 type: item.type,
                 img: item.img || undefined,
-                system: this.sanitizeData(item.system || {}),
+                system: this.sanitizeData(item.system || {}, item.type === 'spell' ? 'spellSystem' : undefined),
             }));
         }
         // Add effects if the actor has them
