@@ -1188,6 +1188,22 @@ export class FoundryDataAccess {
       }),
     };
 
+    // D&D 5e skill totals are authoritatively exposed via roll data. Copy them
+    // onto the serialized system payload so downstream consumers do not depend
+    // on compatibility/stale fields under actor.system.skills.*.
+    if ((game.system as any).id === 'dnd5e' && characterData.system?.skills) {
+      const rollData = (actor as any).getRollData?.() as any;
+      const rollSkills = rollData?.skills;
+      if (rollSkills && typeof rollSkills === 'object') {
+        for (const [skillKey, skillData] of Object.entries(characterData.system.skills as Record<string, any>)) {
+          const derivedSkill = rollSkills[skillKey];
+          if (!derivedSkill || typeof skillData !== 'object' || skillData === null) continue;
+          if (derivedSkill.total !== undefined) skillData.total = derivedSkill.total;
+          if (derivedSkill.mod !== undefined) skillData.mod = derivedSkill.mod;
+        }
+      }
+    }
+
     // Add PF2e-specific data if available
     const actorAny = actor as any;
 
