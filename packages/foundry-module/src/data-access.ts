@@ -6989,8 +6989,16 @@ export class FoundryDataAccess {
       }
 
       const activityName: string = data.activityName ?? '';
-      const existingActivities: Record<string, any> = (item.system as any)?.activities ?? {};
-      const existingSummon = Object.values(existingActivities).find(
+      // item.system.activities is a Map-backed ActivityCollection on a live Document, not a
+      // plain object — Object.values() on it silently returns [] (same class of bug as the
+      // documented SetField/properties sanitizer collapse). Use .values() when available.
+      const activitiesField: any = (item.system as any)?.activities;
+      const activityList: any[] = activitiesField
+        ? typeof activitiesField.values === 'function'
+          ? Array.from(activitiesField.values())
+          : Object.values(activitiesField)
+        : [];
+      const existingSummon = activityList.find(
         (a: any) => a?.type === 'summon' && (a?.name ?? '') === activityName
       ) as any;
       if (existingSummon && !data.replaceExisting) {
@@ -7112,6 +7120,7 @@ export class FoundryDataAccess {
         actor: { id: actor.id, name: actor.name },
         item: { id: item.id, name: item.name },
         activityId,
+        replaced: !!existingSummon,
         warnings: [],
       };
     } catch (error) {

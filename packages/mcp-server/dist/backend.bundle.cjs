@@ -107599,7 +107599,7 @@ ${lines.join("\n")}`
       `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
       `**Activity:** ${params.activityName || "(unnamed)"} (id: \`${result.activityId}\`)`,
       `**Profiles:** ${profileDesc}`,
-      `**Replaced existing:** ${params.replaceExisting ? "yes" : "no"}`
+      `**Replaced existing:** ${result.replaced ? "yes" : "no (created new)"}`
     ].join("\n");
     const warnings = result.warnings ?? [];
     const warningSection = warnings.length > 0 ? `
@@ -107612,6 +107612,7 @@ ${warnings.map((w) => `- ${w}`).join("\n")}` : "";
       item: result.item,
       actor: result.actor,
       activityId: result.activityId,
+      replaced: !!result.replaced,
       warnings,
       message: `${summary}
 

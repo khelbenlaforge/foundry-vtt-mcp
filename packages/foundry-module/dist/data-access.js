@@ -5604,8 +5604,16 @@ export class FoundryDataAccess {
                 item = nameMatches[0];
             }
             const activityName = data.activityName ?? '';
-            const existingActivities = item.system?.activities ?? {};
-            const existingSummon = Object.values(existingActivities).find((a) => a?.type === 'summon' && (a?.name ?? '') === activityName);
+            // item.system.activities is a Map-backed ActivityCollection on a live Document, not a
+            // plain object — Object.values() on it silently returns [] (same class of bug as the
+            // documented SetField/properties sanitizer collapse). Use .values() when available.
+            const activitiesField = item.system?.activities;
+            const activityList = activitiesField
+                ? typeof activitiesField.values === 'function'
+                    ? Array.from(activitiesField.values())
+                    : Object.values(activitiesField)
+                : [];
+            const existingSummon = activityList.find((a) => a?.type === 'summon' && (a?.name ?? '') === activityName);
             if (existingSummon && !data.replaceExisting) {
                 throw new Error(`Item "${item.name}" already has a summon activity named ` +
                     `"${activityName || '(unnamed)'}" (id: ${existingSummon._id}). ` +
@@ -5702,6 +5710,7 @@ export class FoundryDataAccess {
                 actor: { id: actor.id, name: actor.name },
                 item: { id: item.id, name: item.name },
                 activityId,
+                replaced: !!existingSummon,
                 warnings: [],
             };
         }

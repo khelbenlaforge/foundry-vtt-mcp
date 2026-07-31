@@ -1355,7 +1355,7 @@ export class DnD5eAddFeatureTool {
       `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
       `**Activity:** ${params.activityName || '(unnamed)'} (id: \`${result.activityId}\`)`,
       `**Profiles:** ${profileDesc}`,
-      `**Replaced existing:** ${params.replaceExisting ? 'yes' : 'no'}`,
+      `**Replaced existing:** ${result.replaced ? 'yes' : 'no (created new)'}`,
     ].join('\n');
     const warnings = (result.warnings as string[] | undefined) ?? [];
     const warningSection =
@@ -1368,6 +1368,7 @@ export class DnD5eAddFeatureTool {
       item: result.item,
       actor: result.actor,
       activityId: result.activityId,
+      replaced: !!result.replaced,
       warnings,
       message: `${summary}\n\n${details}${warningSection}`,
     };
