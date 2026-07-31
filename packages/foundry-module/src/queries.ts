@@ -104,6 +104,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.setActorSpellcasting`] =
       this.handleSetActorSpellcasting.bind(this);
     CONFIG.queries[`${modulePrefix}.addSpellsToActor`] = this.handleAddSpellsToActor.bind(this);
+    CONFIG.queries[`${modulePrefix}.addSummonActivityToActor`] =
+      this.handleAddSummonActivityToActor.bind(this);
 
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
@@ -2244,6 +2246,38 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to add aura to actor: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async handleAddSummonActivityToActor(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.actorIdentifier) {
+        throw new Error('actorIdentifier is required');
+      }
+      if (!data.itemIdentifier) {
+        throw new Error('itemIdentifier is required');
+      }
+      if (!Array.isArray(data.profiles) || data.profiles.length === 0) {
+        throw new Error('profiles is required and must contain at least one element');
+      }
+      for (const profile of data.profiles) {
+        if (!profile.uuid) {
+          throw new Error('every profile requires a uuid');
+        }
+      }
+
+      return await this.dataAccess.addSummonActivityToActor(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to add summon activity to actor: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

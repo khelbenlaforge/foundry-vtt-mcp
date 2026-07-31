@@ -126,6 +126,14 @@ export class DnD5eAddFeatureTool {
           '• spells — import named spells from compendium. Names must be in English.\n' +
           '  Required: actorIdentifier, spellNames (max 50)\n' +
           '  Optional: compendiumPacks (default ["dnd5e.spells"])\n\n' +
+          '• summon — attach a Summon Activity to an EXISTING item (e.g. a Beastmaster\'s ' +
+          'Primal Companion feature, a Find Familiar spell), so the summoned creature\'s ' +
+          'AC/HP/attack/damage auto-scale off the summoner\'s own stats. Does not create a new ' +
+          'item — targets one already on the actor.\n' +
+          '  Required: actorIdentifier, itemIdentifier, profiles (each needs a uuid)\n' +
+          '  Optional: replaceExisting (default false — errors if the item already has a ' +
+          'summon activity), match, bonuses, summonMode, summonPrompt, creatureSizes, ' +
+          'creatureTypes, tempHP\n\n' +
           'Use list-characters or get-character first to find the actorIdentifier.',
         inputSchema: {
           type: 'object',
@@ -140,6 +148,7 @@ export class DnD5eAddFeatureTool {
                 'aura',
                 'spellcasting',
                 'spells',
+                'summon',
               ],
               description:
                 'Mode selector — determines which parameters are used and which Foundry handler is called.',
@@ -385,6 +394,101 @@ export class DnD5eAddFeatureTool {
                 'Page number in the source book. Used by: passive, attack, attack-with-save, aura.',
               default: '',
             },
+            itemIdentifier: {
+              type: 'string',
+              description:
+                'ID or exact name of an EXISTING item on the actor to attach the summon activity ' +
+                'to (e.g. "Primal Companion"). Errors if no match or more than one item matches ' +
+                'by name. Required for: summon.',
+            },
+            replaceExisting: {
+              type: 'boolean',
+              description:
+                'If the target item already has a summon activity, replace it instead of erroring. ' +
+                'Used by: summon. Default: false.',
+              default: false,
+            },
+            profiles: {
+              type: 'array',
+              minItems: 1,
+              description:
+                'Creatures the summon can produce, each a compendium or world Actor UUID. ' +
+                'Required for: summon.',
+              items: {
+                type: 'object',
+                properties: {
+                  uuid: { type: 'string', description: 'Actor UUID to summon (required).' },
+                  name: { type: 'string', description: 'Display name override (optional).' },
+                  count: {
+                    description: 'Number summoned, fixed or a roll formula (optional).',
+                  },
+                  cr: { description: 'Challenge rating override (optional).' },
+                  level: { description: 'Level requirement gate (optional).' },
+                  types: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Creature type tags shown in the summon picker (optional).',
+                  },
+                },
+                required: ['uuid'],
+              },
+            },
+            match: {
+              type: 'object',
+              description:
+                'Which of the summoner\'s own traits the summoned creature inherits. ' +
+                'Used by: summon. Default: all false except disposition.',
+              properties: {
+                ability: { type: 'boolean', default: false },
+                attacks: { type: 'boolean', default: false },
+                disposition: { type: 'boolean', default: true },
+                proficiency: { type: 'boolean', default: false },
+                saves: { type: 'boolean', default: false },
+              },
+            },
+            bonuses: {
+              type: 'object',
+              description:
+                'Roll-formula bonuses applied to the summoned creature, evaluated against the ' +
+                'summoner\'s roll data (e.g. "@abilities.wis.mod", "@classes.ranger.levels"). ' +
+                'Used by: summon. All fields optional, default "".',
+              properties: {
+                ac: { type: 'string', default: '' },
+                hd: { type: 'string', default: '' },
+                hp: { type: 'string', default: '' },
+                attackDamage: { type: 'string', default: '' },
+                saveDamage: { type: 'string', default: '' },
+                healing: { type: 'string', default: '' },
+              },
+            },
+            summonMode: {
+              type: 'string',
+              description: 'dnd5e summon creation mode override (optional). Used by: summon.',
+            },
+            summonPrompt: {
+              type: 'boolean',
+              description:
+                'Whether the player is prompted to choose a profile at summon time. ' +
+                'Used by: summon. Default: true when more than one profile, else false.',
+            },
+            creatureSizes: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Allowed creature sizes for matching (optional). Used by: summon.',
+              default: [],
+            },
+            creatureTypes: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Allowed creature types for matching (optional). Used by: summon.',
+              default: [],
+            },
+            tempHP: {
+              type: 'string',
+              description:
+                'Temp HP formula granted to the summoner on summon (optional). Used by: summon. Default: "".',
+              default: '',
+            },
           },
           required: ['featureType', 'actorIdentifier'],
         },
@@ -403,6 +507,7 @@ export class DnD5eAddFeatureTool {
           'aura',
           'spellcasting',
           'spells',
+          'summon',
         ]),
       })
       .parse(args);
@@ -422,6 +527,8 @@ export class DnD5eAddFeatureTool {
         return this.handleSpellcasting(args);
       case 'spells':
         return this.handleSpells(args);
+      case 'summon':
+        return this.handleSummon(args);
     }
   }
 
@@ -1122,6 +1229,111 @@ export class DnD5eAddFeatureTool {
       failed,
       warnings,
       message: `${summary}\n\n${lines.join('\n')}`,
+    };
+  }
+
+  private async handleSummon(args: any): Promise<any> {
+    const profileSchema = z.object({
+      uuid: z.string().min(1, 'profile uuid cannot be empty'),
+      name: z.string().optional(),
+      count: z.union([z.number(), z.string()]).optional(),
+      cr: z.union([z.number(), z.string()]).optional(),
+      level: z.union([z.number(), z.string()]).optional(),
+      types: z.array(z.string()).optional(),
+    });
+
+    const schema = z.object({
+      featureType: z.literal('summon'),
+      actorIdentifier: z.string().min(1, 'actorIdentifier cannot be empty'),
+      itemIdentifier: z.string().min(1, 'itemIdentifier cannot be empty'),
+      replaceExisting: z.boolean().default(false),
+      profiles: z.array(profileSchema).min(1, 'at least one profile is required'),
+      match: z
+        .object({
+          ability: z.boolean().default(false),
+          attacks: z.boolean().default(false),
+          disposition: z.boolean().default(true),
+          proficiency: z.boolean().default(false),
+          saves: z.boolean().default(false),
+        })
+        .default({}),
+      bonuses: z
+        .object({
+          ac: z.string().default(''),
+          hd: z.string().default(''),
+          hp: z.string().default(''),
+          attackDamage: z.string().default(''),
+          saveDamage: z.string().default(''),
+          healing: z.string().default(''),
+        })
+        .default({}),
+      summonMode: z.string().optional(),
+      summonPrompt: z.boolean().optional(),
+      creatureSizes: z.array(z.string()).default([]),
+      creatureTypes: z.array(z.string()).default([]),
+      tempHP: z.string().default(''),
+    });
+
+    const parsed = schema.parse(args);
+
+    this.logger.info('Adding summon activity to D&D 5e actor item', {
+      actorIdentifier: parsed.actorIdentifier,
+      itemIdentifier: parsed.itemIdentifier,
+      profileCount: parsed.profiles.length,
+      replaceExisting: parsed.replaceExisting,
+    });
+
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== 'dnd5e') {
+        throw new Error(
+          `dnd5e-add-feature (summon) requires D&D 5e. ` +
+            `Detected system: "${getCachedSystemId() ?? 'unknown'}".`
+        );
+      }
+
+      const result = await this.foundryClient.query(
+        'foundry-mcp-bridge.addSummonActivityToActor',
+        parsed
+      );
+
+      this.logger.info('Summon activity added successfully', {
+        actorId: result.actor?.id,
+        itemId: result.item?.id,
+        activityId: result.activityId,
+      });
+
+      return this.formatSummonResponse(result, parsed);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'dnd5e-add-feature', 'summon activity creation');
+    }
+  }
+
+  private formatSummonResponse(result: any, params: any): any {
+    const profileDesc = (params.profiles as Array<{ name?: string; uuid: string }>)
+      .map(p => p.name ?? p.uuid)
+      .join(', ');
+    const summary = `✅ Summon activity added to "${result.item.name}" on "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Activity:** \`${result.activityId}\``,
+      `**Profiles:** ${profileDesc}`,
+      `**Replaced existing:** ${params.replaceExisting ? 'yes' : 'no'}`,
+    ].join('\n');
+    const warnings = (result.warnings as string[] | undefined) ?? [];
+    const warningSection =
+      warnings.length > 0
+        ? `\n\n⚠️ **Warnings (${warnings.length}):**\n${warnings.map(w => `- ${w}`).join('\n')}`
+        : '';
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      activityId: result.activityId,
+      warnings,
+      message: `${summary}\n\n${details}${warningSection}`,
     };
   }
 }

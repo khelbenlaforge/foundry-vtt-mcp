@@ -5580,6 +5580,135 @@ export class FoundryDataAccess {
             throw error;
         }
     }
+    async addSummonActivityToActor(data) {
+        this.validateFoundryState();
+        if (game.system.id !== 'dnd5e') {
+            throw new Error('addSummonActivityToActor requires the dnd5e game system');
+        }
+        try {
+            const actor = await this.findActorByIdentifier(data.actorIdentifier);
+            if (!actor) {
+                throw new Error(`Actor not found: "${data.actorIdentifier}"`);
+            }
+            const itemIdentifier = data.itemIdentifier;
+            let item = actor.items.get(itemIdentifier);
+            if (!item) {
+                const nameMatches = actor.items.filter((i) => i.name?.toLowerCase() === itemIdentifier.toLowerCase());
+                if (nameMatches.length === 0) {
+                    throw new Error(`Item "${itemIdentifier}" not found on actor "${actor.name}"`);
+                }
+                if (nameMatches.length > 1) {
+                    throw new Error(`Multiple items named "${itemIdentifier}" found on actor "${actor.name}" — ` +
+                        `use the item ID instead.`);
+                }
+                item = nameMatches[0];
+            }
+            const existingActivities = item.system?.activities ?? {};
+            const existingSummon = Object.values(existingActivities).find((a) => a?.type === 'summon');
+            if (existingSummon && !data.replaceExisting) {
+                throw new Error(`Item "${item.name}" already has a summon activity (id: ${existingSummon._id}). ` +
+                    `Pass replaceExisting: true to overwrite it.`);
+            }
+            const activityId = existingSummon && data.replaceExisting
+                ? existingSummon._id
+                : foundry.utils.randomID(16);
+            const match = {
+                ability: data.match?.ability ?? false,
+                attacks: data.match?.attacks ?? false,
+                disposition: data.match?.disposition ?? true,
+                proficiency: data.match?.proficiency ?? false,
+                saves: data.match?.saves ?? false,
+            };
+            const bonuses = {
+                ac: data.bonuses?.ac ?? '',
+                hd: data.bonuses?.hd ?? '',
+                hp: data.bonuses?.hp ?? '',
+                attackDamage: data.bonuses?.attackDamage ?? '',
+                saveDamage: data.bonuses?.saveDamage ?? '',
+                healing: data.bonuses?.healing ?? '',
+            };
+            const profiles = data.profiles.map(p => ({
+                _id: foundry.utils.randomID(16),
+                count: p.count ?? '',
+                cr: p.cr ?? '',
+                level: p.level ?? '',
+                name: p.name ?? '',
+                types: p.types ?? [],
+                uuid: p.uuid,
+            }));
+            const summonActivity = {
+                _id: activityId,
+                type: 'summon',
+                name: '',
+                img: '',
+                sort: 0,
+                description: {},
+                activation: {
+                    type: 'action',
+                    value: 1,
+                    condition: '',
+                    override: false,
+                },
+                duration: { units: '', value: '', override: false },
+                target: {
+                    template: {
+                        count: '',
+                        contiguous: false,
+                        type: '',
+                        size: '',
+                        width: '',
+                        height: '',
+                        units: '',
+                    },
+                    affects: { count: '', type: '', choice: false, special: '' },
+                    prompt: true,
+                    override: false,
+                },
+                range: { units: 'self', override: false },
+                uses: { spent: 0, max: '', recovery: [] },
+                consumption: {
+                    targets: [],
+                    scaling: { allowed: false, max: '' },
+                    spellSlot: true,
+                },
+                profiles,
+                bonuses,
+                creatureSizes: data.creatureSizes ?? [],
+                creatureTypes: data.creatureTypes ?? [],
+                match,
+                summon: {
+                    mode: data.summonMode ?? '',
+                    prompt: data.summonPrompt ?? profiles.length > 1,
+                },
+                tempHP: data.tempHP ?? '',
+            };
+            await item.update({
+                system: {
+                    activities: {
+                        [activityId]: summonActivity,
+                    },
+                },
+            });
+            this.auditLog('addSummonActivityToActor', {
+                actorId: actor.id,
+                itemId: item.id,
+                activityId,
+                replaced: !!existingSummon,
+            }, 'success');
+            return {
+                success: true,
+                actor: { id: actor.id, name: actor.name },
+                item: { id: item.id, name: item.name },
+                activityId,
+                warnings: [],
+            };
+        }
+        catch (error) {
+            console.error(`[${MODULE_ID}] Failed to add summon activity to actor`, error);
+            this.auditLog('addSummonActivityToActor', { actorIdentifier: data.actorIdentifier, itemIdentifier: data.itemIdentifier }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+            throw error;
+        }
+    }
     async addAuraToActor(data) {
         this.validateFoundryState();
         if (game.system.id !== 'dnd5e') {

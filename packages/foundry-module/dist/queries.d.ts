@@ -238,6 +238,7 @@ export declare class QueryHandlers {
     private handleCreateNpcActor;
     private handleAddAttackToActor;
     private handleAddAuraToActor;
+    private handleAddSummonActivityToActor;
     private handleAddPassiveFeatureToActor;
     private handleAddAttackWithSaveToActor;
     private handleSetActorSpellcasting;

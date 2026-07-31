@@ -987,6 +987,7 @@ export declare class FoundryDataAccess {
         sourceRules: string;
     }): Promise<any>;
     addAttackToActor(data: any): Promise<any>;
+    addSummonActivityToActor(data: any): Promise<any>;
     addAuraToActor(data: any): Promise<any>;
     addPassiveFeatureToActor(data: any): Promise<any>;
     addAttackWithSaveToActor(data: any): Promise<any>;

@@ -106581,7 +106581,43 @@ var DnD5eAddFeatureTool = class {
     return [
       {
         name: "dnd5e-add-feature",
-        description: '[D&D 5e only] Add a feature, attack, spellcasting setup, or spells to an existing actor. Set featureType to select the mode \u2014 each mode uses only its own parameters:\n\n\u2022 passive \u2014 descriptive trait, no roll (Multiattack, Magic Resistance, Spider Climb).\n  Required: actorIdentifier, featureName\n  Optional: description, sourceRules, sourceBook, sourcePage\n\n\u2022 save \u2014 feature that forces a saving throw (breath weapon, cone of cold, etc.).\n  Required: actorIdentifier, featureName, saveAbility, saveDC, damageParts\n  Optional: description, activationType, halfOnSave, areaType, areaSize (required if areaType set), areaUnits, affectsType\n\n\u2022 attack \u2014 weapon attack with to-hit roll (Claw, Bite, Scimitar, etc.).\n  Required: actorIdentifier, featureName, attackType, damageParts\n  Required when ranged: rangeFt\n  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, sourceRules, sourceBook, sourcePage\n\n\u2022 attack-with-save \u2014 attack roll on hit + forced save for bonus damage (e.g. Stinger: piercing hit + CON save or poison damage).\n  Required: actorIdentifier, featureName, attackType, damageParts, saveAbility, saveDC, saveDamageParts\n  Required when ranged: rangeFt\n  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, saveOnSave, sourceRules, sourceBook, sourcePage\n\n\u2022 aura \u2014 automatic-damage area, no to-hit, no save (all creatures in range take damage).\n  Required: actorIdentifier, featureName, damageParts, areaType, areaSize\n  Optional: description, activationType, areaUnits, affectsType, sourceRules, sourceBook, sourcePage\n\n\u2022 spellcasting \u2014 configure spell slots and casting ability. Run this BEFORE featureType "spells".\n  Required: actorIdentifier, spellcastingClass, spellcastingLevel\n  Optional: spellcastingAbility (default per class: wizard/artificer\u2192INT, cleric/druid/ranger\u2192WIS, sorcerer/warlock/bard/paladin\u2192CHA), sourceRules\n\n\u2022 spells \u2014 import named spells from compendium. Names must be in English.\n  Required: actorIdentifier, spellNames (max 50)\n  Optional: compendiumPacks (default ["dnd5e.spells"])\n\nUse list-characters or get-character first to find the actorIdentifier.',
+        description: `[D&D 5e only] Add a feature, attack, spellcasting setup, or spells to an existing actor. Set featureType to select the mode \u2014 each mode uses only its own parameters:
+
+\u2022 passive \u2014 descriptive trait, no roll (Multiattack, Magic Resistance, Spider Climb).
+  Required: actorIdentifier, featureName
+  Optional: description, sourceRules, sourceBook, sourcePage
+
+\u2022 save \u2014 feature that forces a saving throw (breath weapon, cone of cold, etc.).
+  Required: actorIdentifier, featureName, saveAbility, saveDC, damageParts
+  Optional: description, activationType, halfOnSave, areaType, areaSize (required if areaType set), areaUnits, affectsType
+
+\u2022 attack \u2014 weapon attack with to-hit roll (Claw, Bite, Scimitar, etc.).
+  Required: actorIdentifier, featureName, attackType, damageParts
+  Required when ranged: rangeFt
+  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, sourceRules, sourceBook, sourcePage
+
+\u2022 attack-with-save \u2014 attack roll on hit + forced save for bonus damage (e.g. Stinger: piercing hit + CON save or poison damage).
+  Required: actorIdentifier, featureName, attackType, damageParts, saveAbility, saveDC, saveDamageParts
+  Required when ranged: rangeFt
+  Optional: description, activationType, weaponClass, abilityModifier, attackBonus, proficient, equipped, reachFt, longRangeFt, properties, saveOnSave, sourceRules, sourceBook, sourcePage
+
+\u2022 aura \u2014 automatic-damage area, no to-hit, no save (all creatures in range take damage).
+  Required: actorIdentifier, featureName, damageParts, areaType, areaSize
+  Optional: description, activationType, areaUnits, affectsType, sourceRules, sourceBook, sourcePage
+
+\u2022 spellcasting \u2014 configure spell slots and casting ability. Run this BEFORE featureType "spells".
+  Required: actorIdentifier, spellcastingClass, spellcastingLevel
+  Optional: spellcastingAbility (default per class: wizard/artificer\u2192INT, cleric/druid/ranger\u2192WIS, sorcerer/warlock/bard/paladin\u2192CHA), sourceRules
+
+\u2022 spells \u2014 import named spells from compendium. Names must be in English.
+  Required: actorIdentifier, spellNames (max 50)
+  Optional: compendiumPacks (default ["dnd5e.spells"])
+
+\u2022 summon \u2014 attach a Summon Activity to an EXISTING item (e.g. a Beastmaster's Primal Companion feature, a Find Familiar spell), so the summoned creature's AC/HP/attack/damage auto-scale off the summoner's own stats. Does not create a new item \u2014 targets one already on the actor.
+  Required: actorIdentifier, itemIdentifier, profiles (each needs a uuid)
+  Optional: replaceExisting (default false \u2014 errors if the item already has a summon activity), match, bonuses, summonMode, summonPrompt, creatureSizes, creatureTypes, tempHP
+
+Use list-characters or get-character first to find the actorIdentifier.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -106594,7 +106630,8 @@ var DnD5eAddFeatureTool = class {
                 "attack-with-save",
                 "aura",
                 "spellcasting",
-                "spells"
+                "spells",
+                "summon"
               ],
               description: "Mode selector \u2014 determines which parameters are used and which Foundry handler is called."
             },
@@ -106783,6 +106820,86 @@ var DnD5eAddFeatureTool = class {
               type: "string",
               description: "Page number in the source book. Used by: passive, attack, attack-with-save, aura.",
               default: ""
+            },
+            itemIdentifier: {
+              type: "string",
+              description: 'ID or exact name of an EXISTING item on the actor to attach the summon activity to (e.g. "Primal Companion"). Errors if no match or more than one item matches by name. Required for: summon.'
+            },
+            replaceExisting: {
+              type: "boolean",
+              description: "If the target item already has a summon activity, replace it instead of erroring. Used by: summon. Default: false.",
+              default: false
+            },
+            profiles: {
+              type: "array",
+              minItems: 1,
+              description: "Creatures the summon can produce, each a compendium or world Actor UUID. Required for: summon.",
+              items: {
+                type: "object",
+                properties: {
+                  uuid: { type: "string", description: "Actor UUID to summon (required)." },
+                  name: { type: "string", description: "Display name override (optional)." },
+                  count: {
+                    description: "Number summoned, fixed or a roll formula (optional)."
+                  },
+                  cr: { description: "Challenge rating override (optional)." },
+                  level: { description: "Level requirement gate (optional)." },
+                  types: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Creature type tags shown in the summon picker (optional)."
+                  }
+                },
+                required: ["uuid"]
+              }
+            },
+            match: {
+              type: "object",
+              description: "Which of the summoner's own traits the summoned creature inherits. Used by: summon. Default: all false except disposition.",
+              properties: {
+                ability: { type: "boolean", default: false },
+                attacks: { type: "boolean", default: false },
+                disposition: { type: "boolean", default: true },
+                proficiency: { type: "boolean", default: false },
+                saves: { type: "boolean", default: false }
+              }
+            },
+            bonuses: {
+              type: "object",
+              description: `Roll-formula bonuses applied to the summoned creature, evaluated against the summoner's roll data (e.g. "@abilities.wis.mod", "@classes.ranger.levels"). Used by: summon. All fields optional, default "".`,
+              properties: {
+                ac: { type: "string", default: "" },
+                hd: { type: "string", default: "" },
+                hp: { type: "string", default: "" },
+                attackDamage: { type: "string", default: "" },
+                saveDamage: { type: "string", default: "" },
+                healing: { type: "string", default: "" }
+              }
+            },
+            summonMode: {
+              type: "string",
+              description: "dnd5e summon creation mode override (optional). Used by: summon."
+            },
+            summonPrompt: {
+              type: "boolean",
+              description: "Whether the player is prompted to choose a profile at summon time. Used by: summon. Default: true when more than one profile, else false."
+            },
+            creatureSizes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Allowed creature sizes for matching (optional). Used by: summon.",
+              default: []
+            },
+            creatureTypes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Allowed creature types for matching (optional). Used by: summon.",
+              default: []
+            },
+            tempHP: {
+              type: "string",
+              description: 'Temp HP formula granted to the summoner on summon (optional). Used by: summon. Default: "".',
+              default: ""
             }
           },
           required: ["featureType", "actorIdentifier"]
@@ -106799,7 +106916,8 @@ var DnD5eAddFeatureTool = class {
         "attack-with-save",
         "aura",
         "spellcasting",
-        "spells"
+        "spells",
+        "summon"
       ])
     }).parse(args);
     switch (featureType) {
@@ -106817,6 +106935,8 @@ var DnD5eAddFeatureTool = class {
         return this.handleSpellcasting(args);
       case "spells":
         return this.handleSpells(args);
+      case "summon":
+        return this.handleSummon(args);
     }
   }
   async handlePassive(args) {
@@ -107391,6 +107511,92 @@ ${details}${warningSection}`
       message: `${summary}
 
 ${lines.join("\n")}`
+    };
+  }
+  async handleSummon(args) {
+    const profileSchema = external_exports.object({
+      uuid: external_exports.string().min(1, "profile uuid cannot be empty"),
+      name: external_exports.string().optional(),
+      count: external_exports.union([external_exports.number(), external_exports.string()]).optional(),
+      cr: external_exports.union([external_exports.number(), external_exports.string()]).optional(),
+      level: external_exports.union([external_exports.number(), external_exports.string()]).optional(),
+      types: external_exports.array(external_exports.string()).optional()
+    });
+    const schema2 = external_exports.object({
+      featureType: external_exports.literal("summon"),
+      actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
+      itemIdentifier: external_exports.string().min(1, "itemIdentifier cannot be empty"),
+      replaceExisting: external_exports.boolean().default(false),
+      profiles: external_exports.array(profileSchema).min(1, "at least one profile is required"),
+      match: external_exports.object({
+        ability: external_exports.boolean().default(false),
+        attacks: external_exports.boolean().default(false),
+        disposition: external_exports.boolean().default(true),
+        proficiency: external_exports.boolean().default(false),
+        saves: external_exports.boolean().default(false)
+      }).default({}),
+      bonuses: external_exports.object({
+        ac: external_exports.string().default(""),
+        hd: external_exports.string().default(""),
+        hp: external_exports.string().default(""),
+        attackDamage: external_exports.string().default(""),
+        saveDamage: external_exports.string().default(""),
+        healing: external_exports.string().default("")
+      }).default({}),
+      summonMode: external_exports.string().optional(),
+      summonPrompt: external_exports.boolean().optional(),
+      creatureSizes: external_exports.array(external_exports.string()).default([]),
+      creatureTypes: external_exports.array(external_exports.string()).default([]),
+      tempHP: external_exports.string().default("")
+    });
+    const parsed = schema2.parse(args);
+    this.logger.info("Adding summon activity to D&D 5e actor item", {
+      actorIdentifier: parsed.actorIdentifier,
+      itemIdentifier: parsed.itemIdentifier,
+      profileCount: parsed.profiles.length,
+      replaceExisting: parsed.replaceExisting
+    });
+    try {
+      const system = await detectGameSystem(this.foundryClient, this.logger);
+      if (system !== "dnd5e") {
+        throw new Error(`dnd5e-add-feature (summon) requires D&D 5e. Detected system: "${getCachedSystemId() ?? "unknown"}".`);
+      }
+      const result = await this.foundryClient.query("foundry-mcp-bridge.addSummonActivityToActor", parsed);
+      this.logger.info("Summon activity added successfully", {
+        actorId: result.actor?.id,
+        itemId: result.item?.id,
+        activityId: result.activityId
+      });
+      return this.formatSummonResponse(result, parsed);
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "dnd5e-add-feature", "summon activity creation");
+    }
+  }
+  formatSummonResponse(result, params) {
+    const profileDesc = params.profiles.map((p) => p.name ?? p.uuid).join(", ");
+    const summary = `\u2705 Summon activity added to "${result.item.name}" on "${result.actor.name}"`;
+    const details = [
+      `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
+      `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
+      `**Activity:** \`${result.activityId}\``,
+      `**Profiles:** ${profileDesc}`,
+      `**Replaced existing:** ${params.replaceExisting ? "yes" : "no"}`
+    ].join("\n");
+    const warnings = result.warnings ?? [];
+    const warningSection = warnings.length > 0 ? `
+
+\u26A0\uFE0F **Warnings (${warnings.length}):**
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+    return {
+      summary,
+      success: true,
+      item: result.item,
+      actor: result.actor,
+      activityId: result.activityId,
+      warnings,
+      message: `${summary}
+
+${details}${warningSection}`
     };
   }
 };
