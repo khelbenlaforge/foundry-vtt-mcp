@@ -6988,14 +6988,16 @@ export class FoundryDataAccess {
         item = nameMatches[0];
       }
 
+      const activityName: string = data.activityName ?? '';
       const existingActivities: Record<string, any> = (item.system as any)?.activities ?? {};
       const existingSummon = Object.values(existingActivities).find(
-        (a: any) => a?.type === 'summon'
+        (a: any) => a?.type === 'summon' && (a?.name ?? '') === activityName
       ) as any;
       if (existingSummon && !data.replaceExisting) {
         throw new Error(
-          `Item "${item.name}" already has a summon activity (id: ${existingSummon._id}). ` +
-            `Pass replaceExisting: true to overwrite it.`
+          `Item "${item.name}" already has a summon activity named ` +
+            `"${activityName || '(unnamed)'}" (id: ${existingSummon._id}). ` +
+            `Pass replaceExisting: true to overwrite it, or use a different activityName.`
         );
       }
 
@@ -7005,7 +7007,7 @@ export class FoundryDataAccess {
           : (foundry.utils as any).randomID(16);
 
       const match = {
-        ability: data.match?.ability ?? false,
+        ability: data.match?.ability ?? '',
         attacks: data.match?.attacks ?? false,
         disposition: data.match?.disposition ?? true,
         proficiency: data.match?.proficiency ?? false,
@@ -7042,7 +7044,7 @@ export class FoundryDataAccess {
       const summonActivity: Record<string, any> = {
         _id: activityId,
         type: 'summon',
-        name: '',
+        name: activityName,
         img: '',
         sort: 0,
         description: {},

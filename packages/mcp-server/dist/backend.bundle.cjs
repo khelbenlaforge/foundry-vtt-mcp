@@ -106825,9 +106825,14 @@ Use list-characters or get-character first to find the actorIdentifier.`,
               type: "string",
               description: 'ID or exact name of an EXISTING item on the actor to attach the summon activity to (e.g. "Primal Companion"). Errors if no match or more than one item matches by name. Required for: summon.'
             },
+            activityName: {
+              type: "string",
+              description: `Display name for this summon activity, shown on the sheet and used to distinguish it from other summon activities on the same item (e.g. "Beast of the Land"). A single item can hold multiple named summon activities \u2014 needed when profiles have different scaling formulas (bonuses are Activity-level, not profile-level) and the player picks which one to trigger, e.g. a Beastmaster's three companion forms. Used by: summon. Default: "".`,
+              default: ""
+            },
             replaceExisting: {
               type: "boolean",
-              description: "If the target item already has a summon activity, replace it instead of erroring. Used by: summon. Default: false.",
+              description: "If a summon activity with this exact activityName already exists on the item, replace it instead of erroring. Used by: summon. Default: false.",
               default: false
             },
             profiles: {
@@ -106857,16 +106862,29 @@ Use list-characters or get-character first to find the actorIdentifier.`,
               type: "object",
               description: "Which of the summoner's own traits the summoned creature inherits. Used by: summon. Default: all false except disposition.",
               properties: {
-                ability: { type: "boolean", default: false },
-                attacks: { type: "boolean", default: false },
+                ability: {
+                  type: "string",
+                  enum: ["str", "dex", "con", "int", "wis", "cha", ""],
+                  description: `Ability whose modifier is added to the attack roll when match.attacks is true. NEVER a boolean \u2014 dnd5e requires an ability key string. Omit or use "" to default to the summoner's spellcasting ability.`,
+                  default: ""
+                },
+                attacks: {
+                  type: "boolean",
+                  default: false,
+                  description: "Replaces (not adds to) the profile actor's baked attack bonus with the summoner's ability modifier + proficiency + attack-bonus field."
+                },
                 disposition: { type: "boolean", default: true },
-                proficiency: { type: "boolean", default: false },
+                proficiency: {
+                  type: "boolean",
+                  default: false,
+                  description: "Overrides the summoned actor's proficiency bonus with the summoner's. Independent of match.attacks \u2014 useful for checks/saves via @prof."
+                },
                 saves: { type: "boolean", default: false }
               }
             },
             bonuses: {
               type: "object",
-              description: `Roll-formula bonuses applied to the summoned creature, evaluated against the summoner's roll data (e.g. "@abilities.wis.mod", "@classes.ranger.levels"). Used by: summon. All fields optional, default "".`,
+              description: `ADDITIVE roll-formula bonuses on top of each profile actor's own base stats, evaluated against the SUMMONER's roll data \u2014 e.g. "@abilities.wis.mod", "@classes.ranger.levels" (never the profile actor's data). Bonuses are Activity-level, not profile-level \u2014 if profiles need different scaling formulas, give them separate summon activities (call this tool once per profile with a single-entry profiles array and replaceExisting as needed). Used by: summon. All fields optional, default "".`,
               properties: {
                 ac: { type: "string", default: "" },
                 hd: { type: "string", default: "" },
@@ -107526,10 +107544,11 @@ ${lines.join("\n")}`
       featureType: external_exports.literal("summon"),
       actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
       itemIdentifier: external_exports.string().min(1, "itemIdentifier cannot be empty"),
+      activityName: external_exports.string().default(""),
       replaceExisting: external_exports.boolean().default(false),
       profiles: external_exports.array(profileSchema).min(1, "at least one profile is required"),
       match: external_exports.object({
-        ability: external_exports.boolean().default(false),
+        ability: external_exports.enum(["str", "dex", "con", "int", "wis", "cha", ""]).default(""),
         attacks: external_exports.boolean().default(false),
         disposition: external_exports.boolean().default(true),
         proficiency: external_exports.boolean().default(false),
@@ -107578,7 +107597,7 @@ ${lines.join("\n")}`
     const details = [
       `**Actor:** ${result.actor.name} (id: \`${result.actor.id}\`)`,
       `**Item:** ${result.item.name} (id: \`${result.item.id}\`)`,
-      `**Activity:** \`${result.activityId}\``,
+      `**Activity:** ${params.activityName || "(unnamed)"} (id: \`${result.activityId}\`)`,
       `**Profiles:** ${profileDesc}`,
       `**Replaced existing:** ${params.replaceExisting ? "yes" : "no"}`
     ].join("\n");
