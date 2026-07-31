@@ -1356,7 +1356,12 @@ export class DnD5eAddFeatureTool {
       `**Activity:** ${params.activityName || '(unnamed)'} (id: \`${result.activityId}\`)`,
       `**Profiles:** ${profileDesc}`,
       `**Replaced existing:** ${result.replaced ? 'yes' : 'no (created new)'}`,
-    ].join('\n');
+    ];
+    if (result.duplicatesRemoved > 0) {
+      details.push(
+        `**Duplicates cleaned up:** ${result.duplicatesRemoved} stray activity(s) with the same name removed`
+      );
+    }
     const warnings = (result.warnings as string[] | undefined) ?? [];
     const warningSection =
       warnings.length > 0
@@ -1369,8 +1374,9 @@ export class DnD5eAddFeatureTool {
       actor: result.actor,
       activityId: result.activityId,
       replaced: !!result.replaced,
+      duplicatesRemoved: result.duplicatesRemoved ?? 0,
       warnings,
-      message: `${summary}\n\n${details}${warningSection}`,
+      message: `${summary}\n\n${details.join('\n')}${warningSection}`,
     };
   }
 }

@@ -107600,7 +107600,10 @@ ${lines.join("\n")}`
       `**Activity:** ${params.activityName || "(unnamed)"} (id: \`${result.activityId}\`)`,
       `**Profiles:** ${profileDesc}`,
       `**Replaced existing:** ${result.replaced ? "yes" : "no (created new)"}`
-    ].join("\n");
+    ];
+    if (result.duplicatesRemoved > 0) {
+      details.push(`**Duplicates cleaned up:** ${result.duplicatesRemoved} stray activity(s) with the same name removed`);
+    }
     const warnings = result.warnings ?? [];
     const warningSection = warnings.length > 0 ? `
 
@@ -107613,10 +107616,11 @@ ${warnings.map((w) => `- ${w}`).join("\n")}` : "";
       actor: result.actor,
       activityId: result.activityId,
       replaced: !!result.replaced,
+      duplicatesRemoved: result.duplicatesRemoved ?? 0,
       warnings,
       message: `${summary}
 
-${details}${warningSection}`
+${details.join("\n")}${warningSection}`
     };
   }
 };

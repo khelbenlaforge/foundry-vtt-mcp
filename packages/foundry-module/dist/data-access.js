@@ -5613,12 +5613,18 @@ export class FoundryDataAccess {
                     ? Array.from(activitiesField.values())
                     : Object.values(activitiesField)
                 : [];
-            const existingSummon = activityList.find((a) => a?.type === 'summon' && (a?.name ?? '') === activityName);
-            if (existingSummon && !data.replaceExisting) {
-                throw new Error(`Item "${item.name}" already has a summon activity named ` +
-                    `"${activityName || '(unnamed)'}" (id: ${existingSummon._id}). ` +
-                    `Pass replaceExisting: true to overwrite it, or use a different activityName.`);
+            // Find ALL matches, not just the first — a prior bug (fixed, but potentially left stray
+            // duplicates on items touched before the fix) could have created more than one summon
+            // activity with the same name. replaceExisting must clean up every duplicate, not just
+            // reuse one and silently leave the rest orphaned.
+            const existingSummons = activityList.filter((a) => a?.type === 'summon' && (a?.name ?? '') === activityName);
+            if (existingSummons.length > 0 && !data.replaceExisting) {
+                throw new Error(`Item "${item.name}" already has ${existingSummons.length} summon activity(s) named ` +
+                    `"${activityName || '(unnamed)'}" (id(s): ${existingSummons.map(a => a._id).join(', ')}). ` +
+                    `Pass replaceExisting: true to overwrite, or use a different activityName.`);
             }
+            const existingSummon = existingSummons[0];
+            const extraDuplicateIds = existingSummons.slice(1).map(a => a._id);
             const activityId = existingSummon && data.replaceExisting
                 ? existingSummon._id
                 : foundry.utils.randomID(16);
@@ -5692,11 +5698,13 @@ export class FoundryDataAccess {
                 },
                 tempHP: data.tempHP ?? '',
             };
+            const activitiesPatch = { [activityId]: summonActivity };
+            for (const extraId of extraDuplicateIds) {
+                activitiesPatch[`-=${extraId}`] = null;
+            }
             await item.update({
                 system: {
-                    activities: {
-                        [activityId]: summonActivity,
-                    },
+                    activities: activitiesPatch,
                 },
             });
             this.auditLog('addSummonActivityToActor', {
@@ -5704,6 +5712,7 @@ export class FoundryDataAccess {
                 itemId: item.id,
                 activityId,
                 replaced: !!existingSummon,
+                duplicatesRemoved: extraDuplicateIds.length,
             }, 'success');
             return {
                 success: true,
@@ -5711,6 +5720,7 @@ export class FoundryDataAccess {
                 item: { id: item.id, name: item.name },
                 activityId,
                 replaced: !!existingSummon,
+                duplicatesRemoved: extraDuplicateIds.length,
                 warnings: [],
             };
         }
