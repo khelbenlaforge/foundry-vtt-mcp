@@ -6159,13 +6159,20 @@ export class FoundryDataAccess {
             const warnings = [];
             const updates = {};
             updates['system.attributes.spellcasting'] = ability;
+            // NPC-type actors have no class items driving derived spell data, so
+            // `system.spells.spellN.max` is recomputed to 0 during data preparation
+            // unless `override` (the actual GM-set source field) is also written —
+            // confirmed 2026-08-16: patching `max` alone left the sheet showing e.g.
+            // "4/0" even though this handler's own response reported the right table.
             if (cls === 'warlock') {
                 for (let i = 1; i <= 9; i++) {
                     updates[`system.spells.spell${i}.max`] = 0;
+                    updates[`system.spells.spell${i}.override`] = 0;
                     updates[`system.spells.spell${i}.value`] = 0;
                 }
                 const pact = WARLOCK_PACT_TABLE[idx];
                 updates['system.spells.pact.max'] = pact.max;
+                updates['system.spells.pact.override'] = pact.max;
                 updates['system.spells.pact.value'] = pact.max;
                 updates['system.spells.pact.level'] = pact.level;
             }
@@ -6186,6 +6193,7 @@ export class FoundryDataAccess {
                 for (let i = 1; i <= 9; i++) {
                     const n = slotRow[i - 1];
                     updates[`system.spells.spell${i}.max`] = n;
+                    updates[`system.spells.spell${i}.override`] = n;
                     updates[`system.spells.spell${i}.value`] = n;
                 }
             }
@@ -6301,6 +6309,14 @@ export class FoundryDataAccess {
                 }
                 const spellData = document.toObject();
                 delete spellData._id;
+                // Clone-from-compendium carries over whatever prepared/method state the
+                // compendium spell happens to have (typically unprepared) — this tool had
+                // no prepared-state handling at all before. dnd5e 5.1+: `system.prepared`
+                // is a NumberField (0=unprepared, 1=prepared, 2=always prepared), not a
+                // boolean — see the same note in queries.ts handleAddSpellToActor.
+                const spellSystem = spellData.system;
+                spellSystem.method = spellSystem.method || 'spell';
+                spellSystem.prepared = data.alwaysPrepared ? 2 : (data.prepared ? 1 : 0);
                 try {
                     const [created] = (await actor.createEmbeddedDocuments('Item', [spellData]));
                     added.push({
@@ -6425,6 +6441,31 @@ const NPC_SKILL_MAP = {
     Stealth: 'ste',
     Survival: 'sur',
 };
+// Governing ability per skill abbreviation. Without this, an explicitly-present
+// `system.skills.<abbr>` entry with no `ability` key falls back to the dnd5e
+// schema's field default (dex) instead of the skill's real ability — confirmed
+// 2026-08-16 on the Hollis Dawnwarden build (all four proficient skills showed
+// a flat +3, i.e. proficiency bonus only, zero ability-modifier contribution).
+const NPC_SKILL_ABILITY = {
+    acr: 'dex',
+    ani: 'wis',
+    arc: 'int',
+    ath: 'str',
+    dec: 'cha',
+    his: 'int',
+    ins: 'wis',
+    itm: 'cha',
+    inv: 'int',
+    med: 'wis',
+    nat: 'int',
+    prc: 'wis',
+    prf: 'cha',
+    per: 'cha',
+    rel: 'int',
+    slt: 'dex',
+    ste: 'dex',
+    sur: 'wis',
+};
 function npcNormalizeCR(input) {
     if (typeof input === 'number')
         return input;
@@ -6450,7 +6491,7 @@ function npcBuildSkillsBlock(skills) {
     for (const { skill, proficiency } of skills) {
         const key = NPC_SKILL_MAP[skill];
         if (key) {
-            result[key] = { value: proficiency === 'expert' ? 2 : 1 };
+            result[key] = { value: proficiency === 'expert' ? 2 : 1, ability: NPC_SKILL_ABILITY[key] };
         }
     }
     return result;

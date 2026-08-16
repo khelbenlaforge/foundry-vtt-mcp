@@ -125,7 +125,8 @@ export class DnD5eAddFeatureTool {
           'cleric/druid/ranger→WIS, sorcerer/warlock/bard/paladin→CHA), sourceRules\n\n' +
           '• spells — import named spells from compendium. Names must be in English.\n' +
           '  Required: actorIdentifier, spellNames (max 50)\n' +
-          '  Optional: compendiumPacks (default ["dnd5e.spells"])\n\n' +
+          '  Optional: compendiumPacks (default ["dnd5e.spells"]), prepared (default false), ' +
+          'alwaysPrepared (default false)\n\n' +
           '• summon — attach a Summon Activity to an EXISTING item (e.g. a Beastmaster\'s ' +
           'Primal Companion feature, a Find Familiar spell), so the summoned creature\'s ' +
           'AC/HP/attack/damage auto-scale off the summoner\'s own stats. Does not create a new ' +
@@ -374,6 +375,20 @@ export class DnD5eAddFeatureTool {
                 'Used by: spells.',
               items: { type: 'string', minLength: 1 },
               default: ['dnd5e.spells'],
+            },
+            prepared: {
+              type: 'boolean',
+              description:
+                'Mark all imported spells as prepared. Default: false (added to the list, unprepared). ' +
+                'Used by: spells.',
+              default: false,
+            },
+            alwaysPrepared: {
+              type: 'boolean',
+              description:
+                'Mark all imported spells as always prepared (e.g. Oath/domain spells) — don\'t count ' +
+                'against the prep limit. Overrides `prepared` when set. Used by: spells.',
+              default: false,
             },
             sourceRules: {
               type: 'string',
@@ -1173,6 +1188,8 @@ export class DnD5eAddFeatureTool {
       actorIdentifier: z.string().min(1, 'actorIdentifier cannot be empty'),
       spellNames: z.array(z.string().min(1)).min(1).max(50),
       compendiumPacks: z.array(z.string().min(1)).default(['dnd5e.spells']),
+      prepared: z.boolean().optional().default(false),
+      alwaysPrepared: z.boolean().optional().default(false),
     });
 
     const parsed = schema.parse(args);

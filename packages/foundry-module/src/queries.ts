@@ -729,6 +729,7 @@ export class QueryHandlers {
     range?: { value?: number; units?: string };
     target?: { count?: number; type?: string };
     prepared?: boolean;
+    alwaysPrepared?: boolean;
     components?: string[];
     materials?: { value?: string; consumed?: boolean; cost?: number };
     activities?: any[];
@@ -752,7 +753,11 @@ export class QueryHandlers {
           level: data.level,
           school: data.school,
           method: 'spell',
-          prepared: data.prepared ?? false,
+          // dnd5e 5.1+: `system.prepared` is a NumberField (0=unprepared,
+          // 1=prepared, 2=always prepared — CONFIG.DND5E.spellPreparationStates),
+          // not a boolean. Writing a raw boolean into it silently failed to
+          // persist (confirmed 2026-08-16) — cast explicitly to the real states.
+          prepared: data.alwaysPrepared ? 2 : (data.prepared ? 1 : 0),
           activation: {
             type: data.activation?.type ?? 'action',
             value: data.activation?.value ?? null,

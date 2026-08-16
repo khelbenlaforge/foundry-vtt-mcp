@@ -300,6 +300,7 @@ export class ItemImportTools {
                             properties: { count: { type: 'number' }, type: { type: 'string', description: 'e.g. "creature", "object", "self"' } },
                         },
                         prepared: { type: 'boolean', description: 'Whether the spell is currently prepared. Default: false (added to the list, unprepared).', default: false },
+                        alwaysPrepared: { type: 'boolean', description: 'True for spells that are always prepared and don\'t count against the prep limit (e.g. Oath/domain spells). Overrides `prepared` when set.', default: false },
                         components: {
                             type: 'array',
                             description: `Component tags shown on the spell (V/S/M/C/R). One or more of: ${ALLOWED_SPELL_COMPONENTS.join(', ')}. Include "concentration" if the spell requires Concentration (also drives duration.concentration unless set explicitly) and "ritual" if it's ritual-castable.`,
@@ -378,6 +379,7 @@ export class ItemImportTools {
             }).optional(),
             target: z.object({ count: z.number().optional(), type: z.string().optional() }).optional(),
             prepared: z.boolean().optional().default(false),
+            alwaysPrepared: z.boolean().optional().default(false),
             components: z.array(z.enum(ALLOWED_SPELL_COMPONENTS)).optional().default([]),
             materials: materialsSchema.optional(),
             activities: z.array(activitySchema).optional(),

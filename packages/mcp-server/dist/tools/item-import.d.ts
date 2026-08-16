@@ -278,6 +278,7 @@ export declare class ItemImportTools {
                 range?: never;
                 target?: never;
                 prepared?: never;
+                alwaysPrepared?: never;
                 components?: never;
                 materials?: never;
             };
@@ -367,6 +368,11 @@ export declare class ItemImportTools {
                     };
                 };
                 prepared: {
+                    type: string;
+                    description: string;
+                    default: boolean;
+                };
+                alwaysPrepared: {
                     type: string;
                     description: string;
                     default: boolean;

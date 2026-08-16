@@ -106611,7 +106611,7 @@ var DnD5eAddFeatureTool = class {
 
 \u2022 spells \u2014 import named spells from compendium. Names must be in English.
   Required: actorIdentifier, spellNames (max 50)
-  Optional: compendiumPacks (default ["dnd5e.spells"])
+  Optional: compendiumPacks (default ["dnd5e.spells"]), prepared (default false), alwaysPrepared (default false)
 
 \u2022 summon \u2014 attach a Summon Activity to an EXISTING item (e.g. a Beastmaster's Primal Companion feature, a Find Familiar spell), so the summoned creature's AC/HP/attack/damage auto-scale off the summoner's own stats. Does not create a new item \u2014 targets one already on the actor.
   Required: actorIdentifier, itemIdentifier, profiles (each needs a uuid)
@@ -106804,6 +106804,16 @@ Use list-characters or get-character first to find the actorIdentifier.`,
               description: 'Compendium pack IDs to search, in priority order (first match wins). Default: ["dnd5e.spells"] (SRD 2014). Use "dnd5e.spells24" for 2024 rules. Used by: spells.',
               items: { type: "string", minLength: 1 },
               default: ["dnd5e.spells"]
+            },
+            prepared: {
+              type: "boolean",
+              description: "Mark all imported spells as prepared. Default: false (added to the list, unprepared). Used by: spells.",
+              default: false
+            },
+            alwaysPrepared: {
+              type: "boolean",
+              description: "Mark all imported spells as always prepared (e.g. Oath/domain spells) \u2014 don't count against the prep limit. Overrides `prepared` when set. Used by: spells.",
+              default: false
             },
             sourceRules: {
               type: "string",
@@ -107444,7 +107454,9 @@ ${details}${warningSection}`
       featureType: external_exports.literal("spells"),
       actorIdentifier: external_exports.string().min(1, "actorIdentifier cannot be empty"),
       spellNames: external_exports.array(external_exports.string().min(1)).min(1).max(50),
-      compendiumPacks: external_exports.array(external_exports.string().min(1)).default(["dnd5e.spells"])
+      compendiumPacks: external_exports.array(external_exports.string().min(1)).default(["dnd5e.spells"]),
+      prepared: external_exports.boolean().optional().default(false),
+      alwaysPrepared: external_exports.boolean().optional().default(false)
     });
     const parsed = schema2.parse(args);
     this.logger.info("Adding spells to D&D 5e actor", {
@@ -111349,6 +111361,7 @@ var ItemImportTools = class {
               properties: { count: { type: "number" }, type: { type: "string", description: 'e.g. "creature", "object", "self"' } }
             },
             prepared: { type: "boolean", description: "Whether the spell is currently prepared. Default: false (added to the list, unprepared).", default: false },
+            alwaysPrepared: { type: "boolean", description: "True for spells that are always prepared and don't count against the prep limit (e.g. Oath/domain spells). Overrides `prepared` when set.", default: false },
             components: {
               type: "array",
               description: `Component tags shown on the spell (V/S/M/C/R). One or more of: ${ALLOWED_SPELL_COMPONENTS.join(", ")}. Include "concentration" if the spell requires Concentration (also drives duration.concentration unless set explicitly) and "ritual" if it's ritual-castable.`,
@@ -111427,6 +111440,7 @@ var ItemImportTools = class {
       }).optional(),
       target: external_exports.object({ count: external_exports.number().optional(), type: external_exports.string().optional() }).optional(),
       prepared: external_exports.boolean().optional().default(false),
+      alwaysPrepared: external_exports.boolean().optional().default(false),
       components: external_exports.array(external_exports.enum(ALLOWED_SPELL_COMPONENTS)).optional().default([]),
       materials: materialsSchema.optional(),
       activities: external_exports.array(activitySchema).optional()
