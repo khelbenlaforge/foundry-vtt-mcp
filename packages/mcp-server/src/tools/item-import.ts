@@ -428,7 +428,8 @@ export class ItemImportTools {
       throw new Error(result?.error ?? 'addSpellToActor failed');
     }
 
-    const parts = [`Added "${params.name}" to actor's spell list (prepared: ${params.prepared}). Item ID: ${result.itemId}`];
+    const preparedState = params.alwaysPrepared ? 'always' : params.prepared;
+    const parts = [`Added "${params.name}" to actor's spell list (prepared: ${preparedState}). Item ID: ${result.itemId}`];
     if (result.warning) {
       parts.push(`WARNING: ${result.warning}`);
     }
