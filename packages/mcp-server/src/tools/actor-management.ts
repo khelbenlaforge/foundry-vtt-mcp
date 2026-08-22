@@ -43,8 +43,18 @@ export class ActorManagementTools {
           properties: {
             action: {
               type: 'string',
-              enum: ['create', 'update', 'delete', 'update-items', 'delete-items'],
-              description: 'Which CRUD operation to perform',
+              enum: [
+                'create',
+                'update',
+                'delete',
+                'place',
+                'update-items',
+                'delete-items',
+              ],
+              description:
+                'Operation to perform: "create" / "update" / "delete" actors, ' +
+                '"place" existing world actors as tokens on the current scene, ' +
+                'or "update-items" / "delete-items" for embedded items.',
             },
             actors: {
               type: 'array',
@@ -83,6 +93,25 @@ export class ActorManagementTools {
               items: { type: 'string' },
               description: 'Actor IDs to delete (action: "delete")',
             },
+            // ── place ───────────────────────────────────────────────────────
+            actorIds: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              description:
+                'Required for "place". IDs of existing world actors to drop as tokens on the ' +
+                'current scene.',
+            },
+            placement: {
+              type: 'string',
+              enum: ['random', 'grid', 'center'],
+              description: 'For "place": token layout strategy. Defaults to "random".',
+            },
+            hidden: {
+              type: 'boolean',
+              description: 'For "place": create the tokens hidden from players. Defaults to false.',
+            },
+            // ── update-items ─────────────────────────────────────────────────
             actorIdentifier: {
               type: 'string',
               description: 'Actor ID or name that owns the items being updated/deleted (action: "update-items"/"delete-items")',
@@ -117,7 +146,19 @@ export class ActorManagementTools {
    * Dispatch a manage-actors call to the appropriate handler based on args.action
    */
   async handleManageActors(args: any): Promise<any> {
-    const action = args?.action;
+    const { action } = z
+      .object({
+        action: z.enum([
+          'create',
+          'update',
+          'delete',
+          'place',
+          'update-items',
+          'delete-items',
+        ]),
+      })
+      .parse(args);
+
     switch (action) {
       case 'create':
         return this.handleCreate(args);
@@ -125,15 +166,43 @@ export class ActorManagementTools {
         return this.handleUpdate(args);
       case 'delete':
         return this.handleDelete(args);
+      case 'place':
+        return this.handlePlace(args);
       case 'update-items':
         return this.handleUpdateItems(args);
       case 'delete-items':
         return this.handleDeleteItems(args);
       default:
         throw new Error(
-          `Unknown action "${action}" — expected one of: create, update, delete, update-items, delete-items`
+          `Unknown action "${action}" — expected one of: create, update, delete, place, update-items, delete-items`
         );
     }
+  }
+
+  // ── place ─────────────────────────────────────────────────────────────────
+
+  private async handlePlace(args: any): Promise<any> {
+    const schema = z.object({
+      actorIds: z.array(z.string().min(1)).min(1),
+      placement: z.enum(['random', 'grid', 'center']).default('random'),
+      hidden: z.boolean().default(false),
+    });
+
+    const { actorIds, placement, hidden } = schema.parse(args);
+
+    this.logger.info('Placing existing actors on scene', {
+      count: actorIds.length,
+      placement,
+      hidden,
+    });
+
+    // The module already exposes a GM-gated addActorsToScene query taking existing
+    // world actor IDs; expose it here rather than only via create-from-compendium.
+    return await this.foundryClient.query('foundry-mcp-bridge.addActorsToScene', {
+      actorIds,
+      placement,
+      hidden,
+    });
   }
 
   // ── create ───────────────────────────────────────────────────────────────
