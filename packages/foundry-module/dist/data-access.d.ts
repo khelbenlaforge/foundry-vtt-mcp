@@ -369,6 +369,14 @@ export declare class FoundryDataAccess {
         private: any;
     }[]>;
     /**
+     * Return a compendium pack's index entries as a plain array.
+     * `fields` requests extra (dot-notation) fields be included in the index —
+     * e.g. ['type', 'system.details.species.value'] — so callers can filter
+     * without loading every full document. Mirrors the getIndex({ fields })
+     * pattern used elsewhere, with a fallback for older Foundry APIs.
+     */
+    getPackIndex(packId: string, fields?: string[]): Promise<any[]>;
+    /**
      * Sanitize data to remove sensitive information and make it JSON-safe
      */
     private sanitizeData;

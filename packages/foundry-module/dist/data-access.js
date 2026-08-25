@@ -2296,6 +2296,29 @@ export class FoundryDataAccess {
         }));
     }
     /**
+     * Return a compendium pack's index entries as a plain array.
+     * `fields` requests extra (dot-notation) fields be included in the index —
+     * e.g. ['type', 'system.details.species.value'] — so callers can filter
+     * without loading every full document. Mirrors the getIndex({ fields })
+     * pattern used elsewhere, with a fallback for older Foundry APIs.
+     */
+    async getPackIndex(packId, fields) {
+        const pack = game.packs.get(packId);
+        if (!pack) {
+            throw new Error(`Compendium pack not found: ${packId}`);
+        }
+        let packIndex;
+        try {
+            packIndex = await pack.getIndex(fields && fields.length > 0 ? { fields } : undefined);
+        }
+        catch {
+            // Fallback: older Foundry API without the fields option
+            packIndex = await pack.getIndex();
+        }
+        const source = packIndex && typeof packIndex.values === 'function' ? packIndex : pack.index;
+        return Array.from(source.values()).map((entry) => this.sanitizeData(entry));
+    }
+    /**
      * Sanitize data to remove sensitive information and make it JSON-safe
      */
     sanitizeData(data, context) {

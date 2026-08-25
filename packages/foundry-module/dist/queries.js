@@ -31,6 +31,7 @@ export class QueryHandlers {
         CONFIG.queries[`${modulePrefix}.searchCompendium`] = this.handleSearchCompendium.bind(this);
         CONFIG.queries[`${modulePrefix}.listCreaturesByCriteria`] = this.handleListCreaturesByCriteria.bind(this);
         CONFIG.queries[`${modulePrefix}.getAvailablePacks`] = this.handleGetAvailablePacks.bind(this);
+        CONFIG.queries[`${modulePrefix}.getPackIndex`] = this.handleGetPackIndex.bind(this);
         // Scene queries
         CONFIG.queries[`${modulePrefix}.getActiveScene`] = this.handleGetActiveScene.bind(this);
         CONFIG.queries[`${modulePrefix}.list-scenes`] = this.handleListScenes.bind(this);
@@ -249,6 +250,28 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`Failed to get available packs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * Handle get pack index request. Returns a compendium pack's index entries,
+     * optionally including extra system fields (e.g. dsa5 species/career) so callers
+     * can filter without loading every full document. Used by list-dsa5-archetypes.
+     */
+    async handleGetPackIndex(data) {
+        try {
+            // SECURITY: Silent GM validation
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed) {
+                return { error: 'Access denied', success: false };
+            }
+            this.dataAccess.validateFoundryState();
+            if (!data?.packId) {
+                throw new Error('packId is required');
+            }
+            return await this.dataAccess.getPackIndex(data.packId, data.fields);
+        }
+        catch (error) {
+            throw new Error(`Failed to get pack index: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
     /**

@@ -114446,7 +114446,10 @@ var DSA5CharacterCreator = class {
       for (const pack of characterPacks) {
         try {
           const packIndex = await this.foundryClient.query("foundry-mcp-bridge.getPackIndex", {
-            packId: pack.id
+            packId: pack.id,
+            // Include the fields the species/profession filters read so the index
+            // carries them without loading every full document.
+            fields: ["type", "system.details.species.value", "system.details.career.value"]
           });
           const packArchetypes = packIndex.filter((entry) => entry.type === "character").filter((entry) => {
             if (filterBySpecies && entry.system?.details?.species?.value !== filterBySpecies) {

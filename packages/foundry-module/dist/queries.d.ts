@@ -40,6 +40,12 @@ export declare class QueryHandlers {
      */
     private handleGetAvailablePacks;
     /**
+     * Handle get pack index request. Returns a compendium pack's index entries,
+     * optionally including extra system fields (e.g. dsa5 species/career) so callers
+     * can filter without loading every full document. Used by list-dsa5-archetypes.
+     */
+    private handleGetPackIndex;
+    /**
      * Handle get active scene request
      */
     private handleGetActiveScene;
