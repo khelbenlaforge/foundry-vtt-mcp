@@ -106058,8 +106058,15 @@ var ActorManagementTools = class {
           properties: {
             action: {
               type: "string",
-              enum: ["create", "update", "delete", "update-items", "delete-items"],
-              description: "Which CRUD operation to perform"
+              enum: [
+                "create",
+                "update",
+                "delete",
+                "place",
+                "update-items",
+                "delete-items"
+              ],
+              description: 'Operation to perform: "create" / "update" / "delete" actors, "place" existing world actors as tokens on the current scene, or "update-items" / "delete-items" for embedded items.'
             },
             actors: {
               type: "array",
@@ -106098,6 +106105,23 @@ var ActorManagementTools = class {
               items: { type: "string" },
               description: 'Actor IDs to delete (action: "delete")'
             },
+            // ── place ───────────────────────────────────────────────────────
+            actorIds: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
+              description: 'Required for "place". IDs of existing world actors to drop as tokens on the current scene.'
+            },
+            placement: {
+              type: "string",
+              enum: ["random", "grid", "center"],
+              description: 'For "place": token layout strategy. Defaults to "random".'
+            },
+            hidden: {
+              type: "boolean",
+              description: 'For "place": create the tokens hidden from players. Defaults to false.'
+            },
+            // ── update-items ─────────────────────────────────────────────────
             actorIdentifier: {
               type: "string",
               description: 'Actor ID or name that owns the items being updated/deleted (action: "update-items"/"delete-items")'
@@ -106131,7 +106155,16 @@ var ActorManagementTools = class {
    * Dispatch a manage-actors call to the appropriate handler based on args.action
    */
   async handleManageActors(args) {
-    const action = args?.action;
+    const { action } = external_exports.object({
+      action: external_exports.enum([
+        "create",
+        "update",
+        "delete",
+        "place",
+        "update-items",
+        "delete-items"
+      ])
+    }).parse(args);
     switch (action) {
       case "create":
         return this.handleCreate(args);
@@ -106139,13 +106172,34 @@ var ActorManagementTools = class {
         return this.handleUpdate(args);
       case "delete":
         return this.handleDelete(args);
+      case "place":
+        return this.handlePlace(args);
       case "update-items":
         return this.handleUpdateItems(args);
       case "delete-items":
         return this.handleDeleteItems(args);
       default:
-        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, update, delete, update-items, delete-items`);
+        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, update, delete, place, update-items, delete-items`);
     }
+  }
+  // ── place ─────────────────────────────────────────────────────────────────
+  async handlePlace(args) {
+    const schema2 = external_exports.object({
+      actorIds: external_exports.array(external_exports.string().min(1)).min(1),
+      placement: external_exports.enum(["random", "grid", "center"]).default("random"),
+      hidden: external_exports.boolean().default(false)
+    });
+    const { actorIds, placement, hidden } = schema2.parse(args);
+    this.logger.info("Placing existing actors on scene", {
+      count: actorIds.length,
+      placement,
+      hidden
+    });
+    return await this.foundryClient.query("foundry-mcp-bridge.addActorsToScene", {
+      actorIds,
+      placement,
+      hidden
+    });
   }
   // ── create ───────────────────────────────────────────────────────────────
   async handleCreate(args) {
