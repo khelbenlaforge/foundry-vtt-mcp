@@ -6214,7 +6214,10 @@ export class FoundryDataAccess {
 
   /**
    * Delete scenes by Foundry ID or exact name. A full source snapshot is retained
-   * in the world flag so this tool's restore action can recreate the scene.
+   * in a world-scoped module setting so this tool's restore action can recreate the
+   * scene. `game.world` does not expose getFlag/setFlag (no active-world Document
+   * to attach flags to) -- game.settings is this fork's proven mechanism for
+   * world-scoped persistent data (see 'rollStates'/'buttonMessageMap' in settings.ts).
    */
   async deleteScenes(identifiers: string[]): Promise<{ deleted: Array<{ id: string; name: string }>; total: number }> {
     try {
@@ -6232,16 +6235,11 @@ export class FoundryDataAccess {
         seenIds.add(scene.id);
       }
 
-      const worldAny = game.world as any;
-      if (!worldAny?.getFlag || !worldAny?.setFlag) {
-        throw new Error('World flags are unavailable; scenes cannot be backed up for restore');
-      }
-
-      const backups = { ...(worldAny.getFlag(this.moduleId, 'sceneBackups') || {}) } as Record<string, any>;
+      const backups = { ...((game.settings.get(this.moduleId, 'sceneBackups') as any) || {}) } as Record<string, any>;
       for (const { scene } of resolved) {
         backups[scene.id] = scene.toObject();
       }
-      await worldAny.setFlag(this.moduleId, 'sceneBackups', backups);
+      await game.settings.set(this.moduleId, 'sceneBackups', backups);
 
       const sceneClass = Scene as any;
       await sceneClass.deleteDocuments(resolved.map(({ scene }) => scene.id));
@@ -6261,12 +6259,7 @@ export class FoundryDataAccess {
   /** Recreate scenes from snapshots captured by deleteScenes, then consume them. */
   async restoreScenes(identifiers: string[]): Promise<{ restored: Array<{ id: string; name: string }>; total: number }> {
     try {
-      const worldAny = game.world as any;
-      if (!worldAny?.getFlag || !worldAny?.setFlag) {
-        throw new Error('World flags are unavailable; scene backups cannot be restored');
-      }
-
-      const backups = { ...(worldAny.getFlag(this.moduleId, 'sceneBackups') || {}) } as Record<string, any>;
+      const backups = { ...((game.settings.get(this.moduleId, 'sceneBackups') as any) || {}) } as Record<string, any>;
       const resolved = identifiers.map(identifier => {
         const backupKey = backups[identifier]
           ? identifier
@@ -6292,7 +6285,7 @@ export class FoundryDataAccess {
       }
 
       for (const { backupKey } of resolved) delete backups[backupKey];
-      await worldAny.setFlag(this.moduleId, 'sceneBackups', backups);
+      await game.settings.set(this.moduleId, 'sceneBackups', backups);
 
       const result = {
         restored: (restoredScenes as any[]).map(scene => ({ id: scene.id, name: scene.name })),

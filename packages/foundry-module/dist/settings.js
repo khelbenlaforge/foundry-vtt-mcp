@@ -334,6 +334,13 @@ export class ModuleSettings {
             type: Object,
             default: {},
         });
+        // Pre-delete scene snapshots for manage-scenes' delete/restore actions
+        game.settings.register(this.moduleId, 'sceneBackups', {
+            scope: 'world',
+            config: false,
+            type: Object,
+            default: {},
+        });
     }
     /**
      * Handle roll states setting changes - fires on all clients for world-scoped settings

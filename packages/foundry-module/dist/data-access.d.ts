@@ -899,7 +899,10 @@ export declare class FoundryDataAccess {
     }>;
     /**
      * Delete scenes by Foundry ID or exact name. A full source snapshot is retained
-     * in the world flag so this tool's restore action can recreate the scene.
+     * in a world-scoped module setting so this tool's restore action can recreate the
+     * scene. `game.world` does not expose getFlag/setFlag (no active-world Document
+     * to attach flags to) -- game.settings is this fork's proven mechanism for
+     * world-scoped persistent data (see 'rollStates'/'buttonMessageMap' in settings.ts).
      */
     deleteScenes(identifiers: string[]): Promise<{
         deleted: Array<{
