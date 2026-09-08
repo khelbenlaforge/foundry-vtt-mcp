@@ -711,7 +711,10 @@ export declare class FoundryDataAccess {
     getCharacterEntity(data: {
         characterIdentifier: string;
         entityIdentifier: string;
-    }): Promise<any>;
+    }): Promise<{
+        entityType: 'item' | 'action' | 'effect';
+        entity: any;
+    } | null>;
     /**
      * Move a token to a new position on the scene
      */

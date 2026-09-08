@@ -230,6 +230,10 @@ export declare class QueryHandlers {
      * Handle search character items request
      */
     private handleSearchCharacterItems;
+    /**
+     * Handle get character entity request
+     */
+    private handleGetCharacterEntity;
     private handleCreateActors;
     private handleUpdateActors;
     private handleDeleteActors;

@@ -4231,15 +4231,13 @@ export class FoundryDataAccess {
                 item.name.toLowerCase() === data.entityIdentifier.toLowerCase());
             if (entity) {
                 return {
-                    success: true,
                     entityType: 'item',
                     entity: {
                         id: entity.id,
                         name: entity.name,
                         type: entity.type,
-                        img: entity.img,
-                        description: entity.system?.description?.value || entity.system?.description || '',
-                        system: entity.system
+                        ...(entity.img ? { img: entity.img } : {}),
+                        system: this.sanitizeData(entity.system, entity.type === 'spell' ? 'spellSystem' : undefined),
                     }
                 };
             }
@@ -4252,7 +4250,6 @@ export class FoundryDataAccess {
                     action.name?.toLowerCase() === data.entityIdentifier.toLowerCase());
                 if (entity) {
                     return {
-                        success: true,
                         entityType: 'action',
                         entity
                     };
@@ -4261,22 +4258,32 @@ export class FoundryDataAccess {
             // Search in effects
             const effects = character.effects?.contents || [];
             entity = effects.find((effect) => effect.id === data.entityIdentifier ||
-                effect.name?.toLowerCase() === data.entityIdentifier.toLowerCase());
+                (effect.name || effect.label)?.toLowerCase() === data.entityIdentifier.toLowerCase());
             if (entity) {
+                const eff = entity;
+                const dur = eff.duration;
+                // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
+                // (deprecated since v14, removed in v16). Fall back to the raw _source value
+                // (not the live getter) so a v13 document never triggers the deprecation warning.
+                const durRaw = eff._source?.duration;
                 return {
-                    success: true,
                     entityType: 'effect',
                     entity: {
-                        id: entity.id,
-                        name: entity.name || entity.label,
-                        icon: entity.icon,
-                        disabled: entity.disabled,
-                        duration: entity.duration,
-                        changes: entity.changes
+                        id: eff.id,
+                        name: eff.name || eff.label || 'Unknown Effect',
+                        ...(eff.icon ? { icon: eff.icon } : {}),
+                        disabled: eff.disabled,
+                        ...(dur ? {
+                            duration: {
+                                type: dur.units ?? durRaw?.type ?? 'none',
+                                duration: dur.seconds ?? durRaw?.duration,
+                                remaining: dur.remaining,
+                            }
+                        } : {}),
                     }
                 };
             }
-            throw new Error(`Entity not found: "${data.entityIdentifier}" in character "${character.name}"`);
+            return null;
         }
         catch (error) {
             throw new Error(`Failed to get character entity: ${error instanceof Error ? error.message : 'Unknown error'}`);

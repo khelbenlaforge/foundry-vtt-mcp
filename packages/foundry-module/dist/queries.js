@@ -110,6 +110,7 @@ export class QueryHandlers {
         CONFIG.queries[`${modulePrefix}.useItem`] = this.handleUseItem.bind(this);
         // Character search queries
         CONFIG.queries[`${modulePrefix}.searchCharacterItems`] = this.handleSearchCharacterItems.bind(this);
+        CONFIG.queries[`${modulePrefix}.getCharacterEntity`] = this.handleGetCharacterEntity.bind(this);
         // Phase 7: Token manipulation queries
         CONFIG.queries[`${modulePrefix}.move-token`] = this.handleMoveToken.bind(this);
         CONFIG.queries[`${modulePrefix}.update-token`] = this.handleUpdateToken.bind(this);
@@ -1575,6 +1576,32 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`Failed to search character items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * Handle get character entity request
+     */
+    async handleGetCharacterEntity(data) {
+        try {
+            // SECURITY: Silent GM validation
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed) {
+                return { error: 'Access denied', success: false };
+            }
+            this.dataAccess.validateFoundryState();
+            if (!data.characterIdentifier) {
+                throw new Error('characterIdentifier is required');
+            }
+            if (!data.entityIdentifier) {
+                throw new Error('entityIdentifier is required');
+            }
+            return await this.dataAccess.getCharacterEntity({
+                characterIdentifier: data.characterIdentifier,
+                entityIdentifier: data.entityIdentifier,
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get character entity: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
     // ─── Generic actor CRUD ─────────────────────────────────────────────────────
