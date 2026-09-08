@@ -88,6 +88,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.deleteActorItems`] = this.handleDeleteActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.addActorItems`] = this.handleAddActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.removeActorItems`] = this.handleRemoveActorItems.bind(this);
+    CONFIG.queries[`${modulePrefix}.createScenes`] = this.handleCreateScenes.bind(this);
+    CONFIG.queries[`${modulePrefix}.updateScenes`] = this.handleUpdateScenes.bind(this);
     CONFIG.queries[`${modulePrefix}.createWorldItems`] = this.handleCreateWorldItems.bind(this);
     CONFIG.queries[`${modulePrefix}.listWorldItems`] = this.handleListWorldItems.bind(this);
     CONFIG.queries[`${modulePrefix}.updateWorldItems`] = this.handleUpdateWorldItems.bind(this);
@@ -1994,6 +1996,44 @@ export class QueryHandlers {
       return await this.dataAccess.deleteActors(data.ids);
     } catch (error) {
       throw new Error(`Failed to delete actors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleCreateScenes(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!Array.isArray(data?.scenes) || data.scenes.length === 0) {
+        throw new Error('scenes array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.createScenes(data);
+    } catch (error) {
+      throw new Error(`Failed to create scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleUpdateScenes(data: any): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!Array.isArray(data?.updates) || data.updates.length === 0) {
+        throw new Error('updates array is required and must contain at least one entry');
+      }
+
+      return await this.dataAccess.updateScenes(data.updates);
+    } catch (error) {
+      throw new Error(`Failed to update scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

@@ -661,6 +661,11 @@ export declare class FoundryDataAccess {
      */
     private findActorByIdentifier;
     /**
+     * Find a scene by Foundry ID or name. IDs are checked first to avoid treating
+     * a 16-character document ID as a scene-name search.
+     */
+    private findSceneByIdentifier;
+    /**
      * Get friendly NPCs from current scene
      */
     getFriendlyNPCs(): Promise<Array<{
@@ -834,6 +839,57 @@ export declare class FoundryDataAccess {
         name?: string;
         img?: string;
         system?: Record<string, any>;
+    }>): Promise<{
+        updated: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /**
+     * Create one or more scenes with the common map configuration fields exposed
+     * directly. More specialized scene content (tokens, walls, tiles, etc.) is
+     * intentionally managed by its dedicated tools.
+     */
+    createScenes(params: {
+        scenes: Array<{
+            name: string;
+            width?: number;
+            height?: number;
+            padding?: number;
+            background?: string;
+            backgroundColor?: string;
+            grid?: Record<string, any>;
+            gridSize?: number;
+            gridDistance?: number;
+            gridUnits?: string;
+            navigation?: boolean;
+            navName?: string;
+        }>;
+        folder?: string;
+    }): Promise<{
+        created: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /** Update one or more scenes by Foundry ID or exact name. */
+    updateScenes(updates: Array<{
+        identifier: string;
+        name?: string;
+        width?: number;
+        height?: number;
+        padding?: number;
+        background?: string;
+        backgroundColor?: string;
+        grid?: Record<string, any>;
+        gridSize?: number;
+        gridDistance?: number;
+        gridUnits?: string;
+        navigation?: boolean;
+        navName?: string;
+        folder?: string;
     }>): Promise<{
         updated: Array<{
             id: string;

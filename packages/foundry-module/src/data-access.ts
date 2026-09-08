@@ -4964,6 +4964,22 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Find a scene by Foundry ID or name. IDs are checked first to avoid treating
+   * a 16-character document ID as a scene-name search.
+   */
+  private findSceneByIdentifier(identifier: string): any {
+    const scenes = game.scenes as any;
+    if (identifier.length === 16) {
+      const scene = scenes?.get(identifier);
+      if (scene) return scene;
+    }
+
+    return Array.from(scenes || []).find(
+      (scene: any) => scene.name?.toLowerCase() === identifier.toLowerCase()
+    );
+  }
+
+  /**
    * Get friendly NPCs from current scene
    */
   async getFriendlyNPCs(): Promise<Array<{id: string, name: string}>> {
@@ -5117,7 +5133,10 @@ export class FoundryDataAccess {
   /**
    * Get or create a folder for organizing MCP-generated content
    */
-  private async getOrCreateFolder(folderName: string, type: 'Actor' | 'JournalEntry'): Promise<string | null> {
+  private async getOrCreateFolder(
+    folderName: string,
+    type: 'Actor' | 'JournalEntry' | 'Scene' | 'RollTable' | 'Playlist'
+  ): Promise<string | null> {
     try {
       // Look for existing folder
       const existingFolder = game.folders?.find((f: any) => 
@@ -6019,6 +6038,176 @@ export class FoundryDataAccess {
       return { updated: updatedActors, total: updatedActors.length };
     } catch (error) {
       this.auditLog('updateActors', { count: updates.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      throw error;
+    }
+  }
+
+  // ─── Generic scene CRUD ─────────────────────────────────────────────────────
+
+  /**
+   * Create one or more scenes with the common map configuration fields exposed
+   * directly. More specialized scene content (tokens, walls, tiles, etc.) is
+   * intentionally managed by its dedicated tools.
+   */
+  async createScenes(params: {
+    scenes: Array<{
+      name: string;
+      width?: number;
+      height?: number;
+      padding?: number;
+      background?: string;
+      backgroundColor?: string;
+      grid?: Record<string, any>;
+      gridSize?: number;
+      gridDistance?: number;
+      gridUnits?: string;
+      navigation?: boolean;
+      navName?: string;
+    }>;
+    folder?: string;
+  }): Promise<{ created: Array<{ id: string; name: string }>; total: number }> {
+    const folderName = params.folder ?? 'Foundry MCP Scenes';
+    const folderId = await this.getOrCreateFolder(folderName, 'Scene');
+
+    const docs = params.scenes.map(scene => {
+      const doc: Record<string, any> = { name: scene.name };
+      if (scene.width !== undefined) doc.width = scene.width;
+      if (scene.height !== undefined) doc.height = scene.height;
+      if (scene.padding !== undefined) doc.padding = scene.padding;
+      if (scene.background !== undefined) doc.background = { src: scene.background };
+      if (scene.backgroundColor !== undefined) {
+        doc.background = { ...(doc.background ?? {}), color: scene.backgroundColor };
+      }
+      if (scene.grid !== undefined) doc.grid = scene.grid;
+      if (scene.gridSize !== undefined || scene.gridDistance !== undefined || scene.gridUnits !== undefined) {
+        doc.grid = {
+          ...(doc.grid ?? {}),
+          ...(scene.gridSize !== undefined ? { size: scene.gridSize } : {}),
+          ...(scene.gridDistance !== undefined ? { distance: scene.gridDistance } : {}),
+          ...(scene.gridUnits !== undefined ? { units: scene.gridUnits } : {}),
+        };
+      }
+      if (scene.navigation !== undefined) doc.navigation = scene.navigation;
+      if (scene.navName !== undefined) doc.navName = scene.navName;
+      if (folderId) doc.folder = folderId;
+      return doc;
+    });
+
+    try {
+      const sceneClass = Scene as any;
+      const created = await sceneClass.createDocuments(docs);
+      if (!created || created.length === 0) {
+        throw new Error('Foundry failed to create scene documents');
+      }
+
+      // v14 renders the scene background through its default SceneLevel. Keep the
+      // legacy scene field above for v13 compatibility, then align that level when
+      // the runtime exposes one.
+      for (let i = 0; i < created.length; i++) {
+        const source = params.scenes[i];
+        if (source.background === undefined && source.backgroundColor === undefined) continue;
+        try {
+          const scene = created[i] as any;
+          const level = (scene.levels?.contents ?? scene.levels ?? [])[0] as any;
+          if (level?.update) {
+            const levelPatch: Record<string, any> = {};
+            if (source.background !== undefined) levelPatch['background.src'] = source.background;
+            if (source.backgroundColor !== undefined) {
+              levelPatch['background.color'] = source.backgroundColor;
+            }
+            await level.update(levelPatch);
+          }
+        } catch (error) {
+          console.warn(`[${this.moduleId}] Failed to align scene level background:`, error);
+        }
+      }
+
+      const result = {
+        created: (created as any[]).map(scene => ({ id: scene.id, name: scene.name })),
+        total: created.length,
+      };
+      this.auditLog('createScenes', { count: result.total }, 'success');
+      return result;
+    } catch (error) {
+      this.auditLog('createScenes', { count: params.scenes.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      throw error;
+    }
+  }
+
+  /** Update one or more scenes by Foundry ID or exact name. */
+  async updateScenes(
+    updates: Array<{
+      identifier: string;
+      name?: string;
+      width?: number;
+      height?: number;
+      padding?: number;
+      background?: string;
+      backgroundColor?: string;
+      grid?: Record<string, any>;
+      gridSize?: number;
+      gridDistance?: number;
+      gridUnits?: string;
+      navigation?: boolean;
+      navName?: string;
+      folder?: string;
+    }>
+  ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
+    const patches: Record<string, any>[] = [];
+
+    for (const update of updates) {
+      const scene = this.findSceneByIdentifier(update.identifier);
+      if (!scene) throw new Error(`Scene not found: ${update.identifier}`);
+
+      const patch: Record<string, any> = { _id: scene.id };
+      if (update.name !== undefined) patch.name = update.name;
+      if (update.width !== undefined) patch.width = update.width;
+      if (update.height !== undefined) patch.height = update.height;
+      if (update.padding !== undefined) patch.padding = update.padding;
+      if (update.background !== undefined) patch['background.src'] = update.background;
+      if (update.backgroundColor !== undefined) patch['background.color'] = update.backgroundColor;
+      if (update.grid !== undefined) patch.grid = update.grid;
+      if (update.gridSize !== undefined) patch['grid.size'] = update.gridSize;
+      if (update.gridDistance !== undefined) patch['grid.distance'] = update.gridDistance;
+      if (update.gridUnits !== undefined) patch['grid.units'] = update.gridUnits;
+      if (update.navigation !== undefined) patch.navigation = update.navigation;
+      if (update.navName !== undefined) patch.navName = update.navName;
+      if (update.folder !== undefined) patch.folder = await this.getOrCreateFolder(update.folder, 'Scene');
+      patches.push(patch);
+    }
+
+    try {
+      const sceneClass = Scene as any;
+      const updatedScenes = await sceneClass.updateDocuments(patches);
+
+      // See createScenes: update the v14 default SceneLevel as well as the
+      // Scene document whenever a background-related field was supplied.
+      for (let i = 0; i < updatedScenes.length; i++) {
+        const source = updates[i];
+        if (source.background === undefined && source.backgroundColor === undefined) continue;
+        try {
+          const scene = updatedScenes[i] as any;
+          const level = (scene.levels?.contents ?? scene.levels ?? [])[0] as any;
+          if (level?.update) {
+            const levelPatch: Record<string, any> = {};
+            if (source.background !== undefined) levelPatch['background.src'] = source.background;
+            if (source.backgroundColor !== undefined) {
+              levelPatch['background.color'] = source.backgroundColor;
+            }
+            await level.update(levelPatch);
+          }
+        } catch (error) {
+          console.warn(`[${this.moduleId}] Failed to align scene level background:`, error);
+        }
+      }
+      const result = {
+        updated: (updatedScenes as any[]).map(scene => ({ id: scene.id, name: scene.name })),
+        total: updatedScenes.length,
+      };
+      this.auditLog('updateScenes', { count: result.total }, 'success');
+      return result;
+    } catch (error) {
+      this.auditLog('updateScenes', { count: updates.length }, 'failure', error instanceof Error ? error.message : 'Unknown error');
       throw error;
     }
   }
