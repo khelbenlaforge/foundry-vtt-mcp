@@ -11,6 +11,7 @@ import { CompendiumTools } from './tools/compendium.js';
 import { SceneTools } from './tools/scene.js';
 import { ActorCreationTools } from './tools/actor-creation.js';
 import { ActorManagementTools } from './tools/actor-management.js';
+import { SceneManagementTools } from './tools/scene-management.js';
 import { WorldItemsTools } from './tools/world-items.js';
 import { DnD5eAddFeatureTool } from './tools/dnd5e/add-feature.js';
 import { DnD5eNpcTools } from './tools/dnd5e/npc.js';
@@ -774,6 +775,7 @@ async function startBackend() {
     const sceneTools = new SceneTools({ foundryClient, logger });
     const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
     const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
+    const sceneManagementTools = new SceneManagementTools({ foundryClient, logger });
     const worldItemsTools = new WorldItemsTools({ foundryClient, logger });
     const dnd5eAddFeatureTool = new DnD5eAddFeatureTool({ foundryClient, logger });
     const dnd5eNpcTools = new DnD5eNpcTools({ foundryClient, logger });
@@ -926,6 +928,7 @@ async function startBackend() {
         ...sceneTools.getToolDefinitions(),
         ...actorCreationTools.getToolDefinitions(),
         ...actorManagementTools.getToolDefinitions(),
+        ...sceneManagementTools.getToolDefinitions(),
         ...worldItemsTools.getToolDefinitions(),
         ...dnd5eAddFeatureTool.getToolDefinitions(),
         ...dnd5eNpcTools.getToolDefinitions(),
@@ -1031,6 +1034,9 @@ async function startBackend() {
                                     break;
                                 case 'manage-actors':
                                     result = await actorManagementTools.handleManageActors(args);
+                                    break;
+                                case 'manage-scenes':
+                                    result = await sceneManagementTools.handleManageScenes(args);
                                     break;
                                 case 'manage-world-items':
                                     result = await worldItemsTools.handleManageWorldItems(args);

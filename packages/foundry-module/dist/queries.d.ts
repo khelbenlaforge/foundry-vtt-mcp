@@ -239,6 +239,8 @@ export declare class QueryHandlers {
     private handleDeleteActors;
     private handleCreateScenes;
     private handleUpdateScenes;
+    private handleDeleteScenes;
+    private handleRestoreScenes;
     private handleUpdateActorItems;
     private handleDeleteActorItems;
     private handleAddActorItems;

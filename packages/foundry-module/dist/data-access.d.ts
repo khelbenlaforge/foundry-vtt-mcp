@@ -898,6 +898,25 @@ export declare class FoundryDataAccess {
         total: number;
     }>;
     /**
+     * Delete scenes by Foundry ID or exact name. A full source snapshot is retained
+     * in the world flag so this tool's restore action can recreate the scene.
+     */
+    deleteScenes(identifiers: string[]): Promise<{
+        deleted: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /** Recreate scenes from snapshots captured by deleteScenes, then consume them. */
+    restoreScenes(identifiers: string[]): Promise<{
+        restored: Array<{
+            id: string;
+            name: string;
+        }>;
+        total: number;
+    }>;
+    /**
      * Update one or more items embedded in an actor.
      */
     updateActorItems(actorIdentifier: string, itemUpdates: Array<{

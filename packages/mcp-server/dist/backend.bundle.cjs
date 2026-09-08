@@ -103839,6 +103839,14 @@ var CharacterTools = class {
             identifier: {
               type: "string",
               description: "Character name or ID to look up"
+            },
+            offset: {
+              type: "number",
+              description: "Item offset for pagination; only needed for actors with unusually large inventories \u2014 most calls don't need these."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum items to return; only needed for actors with unusually large inventories \u2014 most calls don't need these."
             }
           },
           required: ["identifier"]
@@ -103940,19 +103948,29 @@ var CharacterTools = class {
   }
   async handleGetCharacter(args) {
     const schema2 = external_exports.object({
-      identifier: external_exports.string().min(1, "Character identifier cannot be empty")
+      identifier: external_exports.string().min(1, "Character identifier cannot be empty"),
+      offset: external_exports.number().int().nonnegative().optional(),
+      limit: external_exports.number().int().positive().optional()
     });
-    const { identifier } = schema2.parse(args);
+    const { identifier, offset, limit } = schema2.parse(args);
     this.logger.info("Getting character information", { identifier });
     try {
       const characterData = await this.foundryClient.query("foundry-mcp-bridge.getCharacterInfo", {
-        characterName: identifier
+        characterName: identifier,
+        itemsOffset: offset,
+        itemsLimit: limit
       });
       this.logger.debug("Successfully retrieved character data", {
         characterId: characterData.id,
         characterName: characterData.name
       });
-      return await this.formatCharacterResponse(characterData);
+      const response = await this.formatCharacterResponse(characterData);
+      if (characterData.hasMoreItems) {
+        response.hasMoreItems = true;
+        response.nextItemsOffset = characterData.nextItemsOffset;
+        response.itemsContinuation = `Call get-character with offset=${characterData.nextItemsOffset} to get more items.`;
+      }
+      return response;
     } catch (error) {
       this.logger.error("Failed to get character information", error);
       throw new Error(`Failed to retrieve character "${identifier}": ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -103966,30 +103984,14 @@ var CharacterTools = class {
     const { characterIdentifier, entityIdentifier } = schema2.parse(args);
     this.logger.info("Getting character entity", { characterIdentifier, entityIdentifier });
     try {
-      const characterData = await this.foundryClient.query("foundry-mcp-bridge.getCharacterInfo", {
-        characterName: characterIdentifier
+      const result = await this.foundryClient.query("foundry-mcp-bridge.getCharacterEntity", {
+        characterIdentifier,
+        entityIdentifier
       });
-      let entity = null;
-      let entityType = null;
-      entity = characterData.items?.find((i) => i.id === entityIdentifier || i.name.toLowerCase() === entityIdentifier.toLowerCase());
-      if (entity) {
-        entityType = "item";
-      }
-      if (!entity && characterData.actions) {
-        entity = characterData.actions.find((a) => a.name.toLowerCase() === entityIdentifier.toLowerCase());
-        if (entity) {
-          entityType = "action";
-        }
-      }
-      if (!entity && characterData.effects) {
-        entity = characterData.effects.find((e) => e.name.toLowerCase() === entityIdentifier.toLowerCase());
-        if (entity) {
-          entityType = "effect";
-        }
-      }
-      if (!entity) {
+      if (!result) {
         throw new Error(`Entity "${entityIdentifier}" not found on character "${characterIdentifier}". Tried items, actions, and effects.`);
       }
+      const { entityType, entity } = result;
       this.logger.debug("Successfully retrieved entity", {
         entityType,
         entityName: entity.name
@@ -106294,6 +106296,172 @@ var ActorManagementTools = class {
       });
     } catch (error) {
       this.errorHandler.handleToolError(error, "manage-actors (delete-items)", "actor item deletion");
+    }
+  }
+};
+
+// dist/tools/scene-management.js
+init_zod();
+var SceneManagementTools = class {
+  foundryClient;
+  logger;
+  errorHandler;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "SceneManagementTools" });
+    this.errorHandler = new ErrorHandler(this.logger);
+  }
+  getToolDefinitions() {
+    return [
+      {
+        name: "manage-scenes",
+        description: 'Create, update, delete, or restore scenes with common map fields. Use "create" for new scenes, and use a Foundry ID or exact scene name to update, delete, or restore scenes.',
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["create", "update", "delete", "restore"],
+              description: 'Operation to perform: "create", "update", "delete", or "restore".'
+            },
+            scenes: {
+              type: "array",
+              description: 'Scenes to create (action: "create")',
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  width: { type: "number", description: "Scene width in pixels" },
+                  height: { type: "number", description: "Scene height in pixels" },
+                  padding: { type: "number", description: "Scene padding multiplier" },
+                  background: { type: "string", description: "Background image or video path" },
+                  backgroundColor: { type: "string", description: "Background color" },
+                  grid: { type: "object", description: "Foundry grid configuration object" },
+                  gridSize: { type: "number", description: "Grid size in pixels" },
+                  gridDistance: { type: "number", description: "Grid distance in scene units" },
+                  gridUnits: { type: "string", description: "Grid distance unit label" },
+                  navigation: { type: "boolean", description: "Show scene in navigation" },
+                  navName: { type: "string", description: "Navigation label" }
+                },
+                required: ["name"]
+              }
+            },
+            folder: {
+              type: "string",
+              description: 'Folder name for newly created scenes (default "Foundry MCP Scenes")'
+            },
+            updates: {
+              type: "array",
+              description: 'Scene patches to apply (action: "update")',
+              items: {
+                type: "object",
+                properties: {
+                  identifier: { type: "string", description: "Foundry scene ID or exact scene name" },
+                  name: { type: "string" },
+                  width: { type: "number", description: "Scene width in pixels" },
+                  height: { type: "number", description: "Scene height in pixels" },
+                  padding: { type: "number", description: "Scene padding multiplier" },
+                  background: { type: "string", description: "Background image or video path" },
+                  backgroundColor: { type: "string", description: "Background color" },
+                  grid: { type: "object", description: "Foundry grid configuration object" },
+                  gridSize: { type: "number", description: "Grid size in pixels" },
+                  gridDistance: { type: "number", description: "Grid distance in scene units" },
+                  gridUnits: { type: "string", description: "Grid distance unit label" },
+                  navigation: { type: "boolean", description: "Show scene in navigation" },
+                  navName: { type: "string", description: "Navigation label" },
+                  folder: { type: "string", description: "Folder name to place the scene in" }
+                },
+                required: ["identifier"]
+              }
+            },
+            identifiers: {
+              type: "array",
+              description: 'Foundry scene IDs or exact scene names to delete or restore (actions: "delete" or "restore")',
+              items: { type: "string" }
+            }
+          },
+          required: ["action"]
+        }
+      }
+    ];
+  }
+  async handleManageScenes(args) {
+    const { action } = external_exports.object({ action: external_exports.enum(["create", "update", "delete", "restore"]) }).parse(args);
+    switch (action) {
+      case "create":
+        return this.handleCreate(args);
+      case "update":
+        return this.handleUpdate(args);
+      case "delete":
+        return this.handleDelete(args);
+      case "restore":
+        return this.handleRestore(args);
+    }
+  }
+  async handleCreate(args) {
+    const sceneSchema = external_exports.object({
+      name: external_exports.string().min(1),
+      width: external_exports.number().positive().optional(),
+      height: external_exports.number().positive().optional(),
+      padding: external_exports.number().min(0).optional(),
+      background: external_exports.string().min(1).optional(),
+      backgroundColor: external_exports.string().min(1).optional(),
+      grid: external_exports.record(external_exports.any()).optional(),
+      gridSize: external_exports.number().positive().optional(),
+      gridDistance: external_exports.number().positive().optional(),
+      gridUnits: external_exports.string().optional(),
+      navigation: external_exports.boolean().optional(),
+      navName: external_exports.string().optional()
+    });
+    const { scenes, folder } = external_exports.object({ scenes: external_exports.array(sceneSchema).min(1), folder: external_exports.string().optional() }).parse(args);
+    this.logger.info("Creating scenes", { count: scenes.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.createScenes", { scenes, folder });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-scenes (create)", "scene creation");
+    }
+  }
+  async handleUpdate(args) {
+    const updateSchema = external_exports.object({
+      identifier: external_exports.string().min(1),
+      name: external_exports.string().min(1).optional(),
+      width: external_exports.number().positive().optional(),
+      height: external_exports.number().positive().optional(),
+      padding: external_exports.number().min(0).optional(),
+      background: external_exports.string().min(1).optional(),
+      backgroundColor: external_exports.string().min(1).optional(),
+      grid: external_exports.record(external_exports.any()).optional(),
+      gridSize: external_exports.number().positive().optional(),
+      gridDistance: external_exports.number().positive().optional(),
+      gridUnits: external_exports.string().optional(),
+      navigation: external_exports.boolean().optional(),
+      navName: external_exports.string().optional(),
+      folder: external_exports.string().min(1).optional()
+    });
+    const { updates } = external_exports.object({ updates: external_exports.array(updateSchema).min(1) }).parse(args);
+    this.logger.info("Updating scenes", { count: updates.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.updateScenes", { updates });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-scenes (update)", "scene update");
+    }
+  }
+  async handleDelete(args) {
+    const { identifiers } = external_exports.object({ identifiers: external_exports.array(external_exports.string().min(1)).min(1) }).parse(args);
+    this.logger.info("Deleting scenes", { count: identifiers.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.deleteScenes", { identifiers });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-scenes (delete)", "scene deletion");
+    }
+  }
+  async handleRestore(args) {
+    const { identifiers } = external_exports.object({ identifiers: external_exports.array(external_exports.string().min(1)).min(1) }).parse(args);
+    this.logger.info("Restoring scenes", { count: identifiers.length });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.restoreScenes", { identifiers });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-scenes (restore)", "scene restore");
     }
   }
 };
@@ -115299,6 +115467,7 @@ async function startBackend() {
   const sceneTools = new SceneTools({ foundryClient, logger });
   const actorCreationTools = new ActorCreationTools({ foundryClient, logger });
   const actorManagementTools = new ActorManagementTools({ foundryClient, logger });
+  const sceneManagementTools = new SceneManagementTools({ foundryClient, logger });
   const worldItemsTools = new WorldItemsTools({ foundryClient, logger });
   const dnd5eAddFeatureTool = new DnD5eAddFeatureTool({ foundryClient, logger });
   const dnd5eNpcTools = new DnD5eNpcTools({ foundryClient, logger });
@@ -115437,6 +115606,7 @@ async function startBackend() {
     ...sceneTools.getToolDefinitions(),
     ...actorCreationTools.getToolDefinitions(),
     ...actorManagementTools.getToolDefinitions(),
+    ...sceneManagementTools.getToolDefinitions(),
     ...worldItemsTools.getToolDefinitions(),
     ...dnd5eAddFeatureTool.getToolDefinitions(),
     ...dnd5eNpcTools.getToolDefinitions(),
@@ -115534,6 +115704,9 @@ async function startBackend() {
                   break;
                 case "manage-actors":
                   result = await actorManagementTools.handleManageActors(args);
+                  break;
+                case "manage-scenes":
+                  result = await sceneManagementTools.handleManageScenes(args);
                   break;
                 case "manage-world-items":
                   result = await worldItemsTools.handleManageWorldItems(args);

@@ -74,6 +74,8 @@ export class QueryHandlers {
         CONFIG.queries[`${modulePrefix}.removeActorItems`] = this.handleRemoveActorItems.bind(this);
         CONFIG.queries[`${modulePrefix}.createScenes`] = this.handleCreateScenes.bind(this);
         CONFIG.queries[`${modulePrefix}.updateScenes`] = this.handleUpdateScenes.bind(this);
+        CONFIG.queries[`${modulePrefix}.deleteScenes`] = this.handleDeleteScenes.bind(this);
+        CONFIG.queries[`${modulePrefix}.restoreScenes`] = this.handleRestoreScenes.bind(this);
         CONFIG.queries[`${modulePrefix}.createWorldItems`] = this.handleCreateWorldItems.bind(this);
         CONFIG.queries[`${modulePrefix}.listWorldItems`] = this.handleListWorldItems.bind(this);
         CONFIG.queries[`${modulePrefix}.updateWorldItems`] = this.handleUpdateWorldItems.bind(this);
@@ -1689,6 +1691,38 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`Failed to update scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    async handleDeleteScenes(data) {
+        try {
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed) {
+                return { error: 'Access denied', success: false };
+            }
+            this.dataAccess.validateFoundryState();
+            if (!Array.isArray(data?.identifiers) || data.identifiers.length === 0) {
+                throw new Error('identifiers array is required and must contain at least one entry');
+            }
+            return await this.dataAccess.deleteScenes(data.identifiers);
+        }
+        catch (error) {
+            throw new Error(`Failed to delete scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    async handleRestoreScenes(data) {
+        try {
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed) {
+                return { error: 'Access denied', success: false };
+            }
+            this.dataAccess.validateFoundryState();
+            if (!Array.isArray(data?.identifiers) || data.identifiers.length === 0) {
+                throw new Error('identifiers array is required and must contain at least one entry');
+            }
+            return await this.dataAccess.restoreScenes(data.identifiers);
+        }
+        catch (error) {
+            throw new Error(`Failed to restore scenes: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
     async handleUpdateActorItems(data) {

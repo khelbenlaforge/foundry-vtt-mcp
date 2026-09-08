@@ -6213,6 +6213,100 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Delete scenes by Foundry ID or exact name. A full source snapshot is retained
+   * in the world flag so this tool's restore action can recreate the scene.
+   */
+  async deleteScenes(identifiers: string[]): Promise<{ deleted: Array<{ id: string; name: string }>; total: number }> {
+    try {
+      const resolved = identifiers.map(identifier => {
+        const scene = this.findSceneByIdentifier(identifier);
+        if (!scene) throw new Error(`Scene not found: ${identifier}`);
+        return { identifier, scene: scene as any };
+      });
+
+      const seenIds = new Set<string>();
+      for (const { identifier, scene } of resolved) {
+        if (seenIds.has(scene.id)) {
+          throw new Error(`Duplicate scene identifier resolves to the same scene: ${identifier}`);
+        }
+        seenIds.add(scene.id);
+      }
+
+      const worldAny = game.world as any;
+      if (!worldAny?.getFlag || !worldAny?.setFlag) {
+        throw new Error('World flags are unavailable; scenes cannot be backed up for restore');
+      }
+
+      const backups = { ...(worldAny.getFlag(this.moduleId, 'sceneBackups') || {}) } as Record<string, any>;
+      for (const { scene } of resolved) {
+        backups[scene.id] = scene.toObject();
+      }
+      await worldAny.setFlag(this.moduleId, 'sceneBackups', backups);
+
+      const sceneClass = Scene as any;
+      await sceneClass.deleteDocuments(resolved.map(({ scene }) => scene.id));
+
+      const result = {
+        deleted: resolved.map(({ scene }) => ({ id: scene.id, name: scene.name })),
+        total: resolved.length,
+      };
+      this.auditLog('deleteScenes', { identifiers, deleted: result.deleted }, 'success');
+      return result;
+    } catch (error) {
+      this.auditLog('deleteScenes', { identifiers }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      throw error;
+    }
+  }
+
+  /** Recreate scenes from snapshots captured by deleteScenes, then consume them. */
+  async restoreScenes(identifiers: string[]): Promise<{ restored: Array<{ id: string; name: string }>; total: number }> {
+    try {
+      const worldAny = game.world as any;
+      if (!worldAny?.getFlag || !worldAny?.setFlag) {
+        throw new Error('World flags are unavailable; scene backups cannot be restored');
+      }
+
+      const backups = { ...(worldAny.getFlag(this.moduleId, 'sceneBackups') || {}) } as Record<string, any>;
+      const resolved = identifiers.map(identifier => {
+        const backupKey = backups[identifier]
+          ? identifier
+          : Object.keys(backups).find(key => backups[key]?.name?.toLowerCase() === identifier.toLowerCase());
+        if (!backupKey) throw new Error(`No deleted-scene backup found for: ${identifier}`);
+        return { identifier, backupKey, data: backups[backupKey] };
+      });
+
+      const seenKeys = new Set<string>();
+      for (const { identifier, backupKey } of resolved) {
+        if (seenKeys.has(backupKey)) {
+          throw new Error(`Duplicate scene identifier resolves to the same backup: ${identifier}`);
+        }
+        seenKeys.add(backupKey);
+      }
+
+      const sceneClass = Scene as any;
+      const restoredScenes = await sceneClass.createDocuments(
+        resolved.map(({ data }) => JSON.parse(JSON.stringify(data)))
+      );
+      if (!restoredScenes || restoredScenes.length !== resolved.length) {
+        throw new Error('Foundry failed to restore all scene documents');
+      }
+
+      for (const { backupKey } of resolved) delete backups[backupKey];
+      await worldAny.setFlag(this.moduleId, 'sceneBackups', backups);
+
+      const result = {
+        restored: (restoredScenes as any[]).map(scene => ({ id: scene.id, name: scene.name })),
+        total: restoredScenes.length,
+      };
+      this.auditLog('restoreScenes', { identifiers, restored: result.restored }, 'success');
+      return result;
+    } catch (error) {
+      this.auditLog('restoreScenes', { identifiers }, 'failure', error instanceof Error ? error.message : 'Unknown error');
+      throw error;
+    }
+  }
+
+  /**
    * Update one or more items embedded in an actor.
    */
   async updateActorItems(

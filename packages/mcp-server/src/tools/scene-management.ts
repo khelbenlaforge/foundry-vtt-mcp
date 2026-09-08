@@ -8,7 +8,7 @@ export interface SceneManagementToolsOptions {
   logger: Logger;
 }
 
-/** Generic scene creation and configuration for common Foundry map fields. */
+/** Generic scene creation, configuration, deletion, and restore for Foundry map fields. */
 export class SceneManagementTools {
   private foundryClient: FoundryClient;
   private logger: Logger;
@@ -25,16 +25,15 @@ export class SceneManagementTools {
       {
         name: 'manage-scenes',
         description:
-          'Create scenes or update their common map configuration. Use "create" for new scenes and ' +
-          '"update" to patch existing scenes by Foundry ID or exact name. This tool does not delete ' +
-          'scenes or place scene contents.',
+          'Create, update, delete, or restore scenes with common map fields. Use "create" for new scenes, ' +
+          'and use a Foundry ID or exact scene name to update, delete, or restore scenes.',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['create', 'update'],
-              description: 'Operation to perform: "create" or "update".',
+              enum: ['create', 'update', 'delete', 'restore'],
+              description: 'Operation to perform: "create", "update", "delete", or "restore".',
             },
             scenes: {
               type: 'array',
@@ -86,6 +85,11 @@ export class SceneManagementTools {
                 required: ['identifier'],
               },
             },
+            identifiers: {
+              type: 'array',
+              description: 'Foundry scene IDs or exact scene names to delete or restore (actions: "delete" or "restore")',
+              items: { type: 'string' },
+            },
           },
           required: ['action'],
         },
@@ -94,13 +98,17 @@ export class SceneManagementTools {
   }
 
   async handleManageScenes(args: any): Promise<any> {
-    const { action } = z.object({ action: z.enum(['create', 'update']) }).parse(args);
+    const { action } = z.object({ action: z.enum(['create', 'update', 'delete', 'restore']) }).parse(args);
 
     switch (action) {
       case 'create':
         return this.handleCreate(args);
       case 'update':
         return this.handleUpdate(args);
+      case 'delete':
+        return this.handleDelete(args);
+      case 'restore':
+        return this.handleRestore(args);
     }
   }
 
@@ -155,6 +163,28 @@ export class SceneManagementTools {
       return await this.foundryClient.query('foundry-mcp-bridge.updateScenes', { updates });
     } catch (error) {
       this.errorHandler.handleToolError(error, 'manage-scenes (update)', 'scene update');
+    }
+  }
+
+  private async handleDelete(args: any): Promise<any> {
+    const { identifiers } = z.object({ identifiers: z.array(z.string().min(1)).min(1) }).parse(args);
+
+    this.logger.info('Deleting scenes', { count: identifiers.length });
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.deleteScenes', { identifiers });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'manage-scenes (delete)', 'scene deletion');
+    }
+  }
+
+  private async handleRestore(args: any): Promise<any> {
+    const { identifiers } = z.object({ identifiers: z.array(z.string().min(1)).min(1) }).parse(args);
+
+    this.logger.info('Restoring scenes', { count: identifiers.length });
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.restoreScenes', { identifiers });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'manage-scenes (restore)', 'scene restore');
     }
   }
 }

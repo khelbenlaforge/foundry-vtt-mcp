@@ -30,6 +30,14 @@ export declare class CharacterTools {
                     type: string;
                     description: string;
                 };
+                offset: {
+                    type: string;
+                    description: string;
+                };
+                limit: {
+                    type: string;
+                    description: string;
+                };
                 characterIdentifier?: never;
                 entityIdentifier?: never;
                 type?: never;
@@ -40,7 +48,6 @@ export declare class CharacterTools {
                 spellLevel?: never;
                 query?: never;
                 category?: never;
-                limit?: never;
             };
             required: string[];
         };
@@ -59,6 +66,8 @@ export declare class CharacterTools {
                     description: string;
                 };
                 identifier?: never;
+                offset?: never;
+                limit?: never;
                 type?: never;
                 actorIdentifier?: never;
                 itemIdentifier?: never;
@@ -67,7 +76,6 @@ export declare class CharacterTools {
                 spellLevel?: never;
                 query?: never;
                 category?: never;
-                limit?: never;
             };
             required: string[];
         };
@@ -82,6 +90,8 @@ export declare class CharacterTools {
                     description: string;
                 };
                 identifier?: never;
+                offset?: never;
+                limit?: never;
                 characterIdentifier?: never;
                 entityIdentifier?: never;
                 actorIdentifier?: never;
@@ -91,7 +101,6 @@ export declare class CharacterTools {
                 spellLevel?: never;
                 query?: never;
                 category?: never;
-                limit?: never;
             };
             required?: never;
         };
@@ -125,12 +134,13 @@ export declare class CharacterTools {
                     description: string;
                 };
                 identifier?: never;
+                offset?: never;
+                limit?: never;
                 characterIdentifier?: never;
                 entityIdentifier?: never;
                 type?: never;
                 query?: never;
                 category?: never;
-                limit?: never;
             };
             required: string[];
         };
@@ -161,6 +171,7 @@ export declare class CharacterTools {
                     description: string;
                 };
                 identifier?: never;
+                offset?: never;
                 entityIdentifier?: never;
                 actorIdentifier?: never;
                 itemIdentifier?: never;
