@@ -5,6 +5,11 @@ interface CharacterInfo {
     img?: string;
     system: Record<string, unknown>;
     items: CharacterItem[];
+    itemsTotal: number;
+    itemsReturned: number;
+    itemsOffset: number;
+    hasMoreItems: boolean;
+    nextItemsOffset?: number;
     effects: CharacterEffect[];
     actions?: any[];
     itemVariants?: any[];
@@ -42,7 +47,25 @@ interface CharacterItem {
     name: string;
     type: string;
     img?: string;
-    system: Record<string, unknown>;
+    system: CharacterItemSystem;
+}
+interface CharacterItemSystem {
+    quantity?: unknown;
+    traits?: {
+        value?: unknown;
+        rarity?: unknown;
+    };
+    level?: unknown;
+    actionType?: {
+        value?: unknown;
+    };
+    equipped?: unknown;
+    attunement?: unknown;
+}
+interface GetCharacterInfoOptions {
+    itemsOffset?: number;
+    itemsLimit?: number;
+    includeVariantsAndToggles?: boolean;
 }
 interface CharacterEffect {
     id: string;
@@ -195,7 +218,7 @@ export declare class FoundryDataAccess {
     /**
      * Get character/actor information by name or ID
      */
-    getCharacterInfo(identifier: string): Promise<CharacterInfo>;
+    getCharacterInfo(identifier: string, options?: GetCharacterInfoOptions): Promise<CharacterInfo>;
     /**
      * Search within a character's items, spells, actions, and effects
      * More token-efficient than getCharacterInfo when you need specific items

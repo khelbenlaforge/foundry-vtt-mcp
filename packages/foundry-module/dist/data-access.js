@@ -739,7 +739,7 @@ export class FoundryDataAccess {
     /**
      * Get character/actor information by name or ID
      */
-    async getCharacterInfo(identifier) {
+    async getCharacterInfo(identifier, options = {}) {
         let actor;
         // Try to find by ID first, then by name
         if (identifier.length === 16) { // Foundry ID length
@@ -751,6 +751,52 @@ export class FoundryDataAccess {
         if (!actor) {
             throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
         }
+        const itemsOffset = typeof options.itemsOffset === 'number' && Number.isFinite(options.itemsOffset)
+            ? Math.max(0, Math.floor(options.itemsOffset))
+            : 0;
+        const itemsLimit = typeof options.itemsLimit === 'number' && Number.isFinite(options.itemsLimit)
+            ? Math.max(1, Math.floor(options.itemsLimit))
+            : 200;
+        // Keep this field list in sync with formatItems/formatEffects/formatActions in
+        // packages/mcp-server/src/tools/character.ts; a mismatch silently loses data.
+        const trimmedItems = actor.items.map(item => {
+            const itemSystem = item.system;
+            const system = {};
+            if (itemSystem?.quantity !== undefined) {
+                system.quantity = this.sanitizeData(itemSystem.quantity);
+            }
+            if (itemSystem?.traits?.value !== undefined || itemSystem?.traits?.rarity !== undefined) {
+                system.traits = {
+                    ...(itemSystem.traits.value !== undefined ? { value: this.sanitizeData(itemSystem.traits.value) } : {}),
+                    ...(itemSystem.traits.rarity !== undefined ? { rarity: this.sanitizeData(itemSystem.traits.rarity) } : {}),
+                };
+            }
+            if (itemSystem?.level !== undefined) {
+                system.level = itemSystem.level && typeof itemSystem.level === 'object' && itemSystem.level.value !== undefined
+                    ? { value: this.sanitizeData(itemSystem.level.value) }
+                    : this.sanitizeData(itemSystem.level);
+            }
+            if (itemSystem?.actionType?.value !== undefined) {
+                system.actionType = { value: this.sanitizeData(itemSystem.actionType.value) };
+            }
+            if (itemSystem?.equipped !== undefined) {
+                system.equipped = this.sanitizeData(itemSystem.equipped);
+            }
+            if (itemSystem?.attunement !== undefined) {
+                system.attunement = this.sanitizeData(itemSystem.attunement);
+            }
+            return {
+                id: item.id,
+                name: item.name,
+                type: item.type,
+                ...(item.img ? { img: item.img } : {}),
+                system,
+            };
+        });
+        const itemsTotal = trimmedItems.length;
+        const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
+        const itemsReturned = items.length;
+        const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
         // Build character data structure
         const characterData = {
             id: actor.id || '',
@@ -758,15 +804,12 @@ export class FoundryDataAccess {
             type: actor.type,
             ...(actor.img ? { img: actor.img } : {}),
             system: this.sanitizeData(actor.system),
-            items: actor.items.map(item => {
-                return {
-                    id: item.id,
-                    name: item.name,
-                    type: item.type,
-                    ...(item.img ? { img: item.img } : {}),
-                    system: this.sanitizeData(item.system, item.type === 'spell' ? 'spellSystem' : undefined),
-                };
-            }),
+            items,
+            itemsTotal,
+            itemsReturned,
+            itemsOffset,
+            hasMoreItems,
+            ...(hasMoreItems ? { nextItemsOffset: itemsOffset + itemsReturned } : {}),
             effects: actor.effects.map(effect => {
                 const eff = effect;
                 const dur = eff.duration;
@@ -824,57 +867,59 @@ export class FoundryDataAccess {
                 ...(action.ready !== undefined ? { ready: action.ready } : {}),
             }));
         }
-        // Include item variants and toggles
-        const itemVariants = [];
-        const itemToggles = [];
-        actor.items.forEach(item => {
-            const itemAny = item;
-            // Extract rule element variants (e.g., weapon variants, stance toggles)
-            if (itemAny.system?.rules) {
-                itemAny.system.rules.forEach((rule, ruleIndex) => {
-                    // Variants (ChoiceSet, RollOption with choices)
-                    if (rule.key === 'ChoiceSet' || (rule.key === 'RollOption' && rule.choices)) {
-                        itemVariants.push({
-                            itemId: item.id,
-                            itemName: item.name,
-                            ruleIndex: ruleIndex,
-                            ruleKey: rule.key,
-                            label: rule.label || rule.prompt,
-                            ...(rule.selection ? { selected: rule.selection } : {}),
-                            ...(rule.choices ? { choices: rule.choices } : {}),
-                        });
-                    }
-                    // Toggles (RollOption toggleable, ToggleProperty)
-                    if ((rule.key === 'RollOption' && rule.toggleable) || rule.key === 'ToggleProperty') {
-                        itemToggles.push({
-                            itemId: item.id,
-                            itemName: item.name,
-                            ruleIndex: ruleIndex,
-                            ruleKey: rule.key,
-                            label: rule.label,
-                            option: rule.option,
-                            ...(rule.value !== undefined ? { enabled: rule.value } : {}),
-                            ...(rule.toggleable !== undefined ? { toggleable: rule.toggleable } : {}),
-                        });
-                    }
-                });
+        // Include item variants and toggles only when explicitly requested.
+        if (options.includeVariantsAndToggles) {
+            const itemVariants = [];
+            const itemToggles = [];
+            actor.items.forEach(item => {
+                const itemAny = item;
+                // Extract rule element variants (e.g., weapon variants, stance toggles)
+                if (itemAny.system?.rules) {
+                    itemAny.system.rules.forEach((rule, ruleIndex) => {
+                        // Variants (ChoiceSet, RollOption with choices)
+                        if (rule.key === 'ChoiceSet' || (rule.key === 'RollOption' && rule.choices)) {
+                            itemVariants.push({
+                                itemId: item.id,
+                                itemName: item.name,
+                                ruleIndex: ruleIndex,
+                                ruleKey: rule.key,
+                                label: rule.label || rule.prompt,
+                                ...(rule.selection ? { selected: rule.selection } : {}),
+                                ...(rule.choices ? { choices: rule.choices } : {}),
+                            });
+                        }
+                        // Toggles (RollOption toggleable, ToggleProperty)
+                        if ((rule.key === 'RollOption' && rule.toggleable) || rule.key === 'ToggleProperty') {
+                            itemToggles.push({
+                                itemId: item.id,
+                                itemName: item.name,
+                                ruleIndex: ruleIndex,
+                                ruleKey: rule.key,
+                                label: rule.label,
+                                option: rule.option,
+                                ...(rule.value !== undefined ? { enabled: rule.value } : {}),
+                                ...(rule.toggleable !== undefined ? { toggleable: rule.toggleable } : {}),
+                            });
+                        }
+                    });
+                }
+                // Also check for item-level toggles (e.g., equipped, identified)
+                if (itemAny.system?.equipped !== undefined) {
+                    itemToggles.push({
+                        itemId: item.id,
+                        itemName: item.name,
+                        type: 'equipped',
+                        enabled: itemAny.system.equipped,
+                    });
+                }
+            });
+            // Add to character data if any found
+            if (itemVariants.length > 0) {
+                characterData.itemVariants = itemVariants;
             }
-            // Also check for item-level toggles (e.g., equipped, identified)
-            if (itemAny.system?.equipped !== undefined) {
-                itemToggles.push({
-                    itemId: item.id,
-                    itemName: item.name,
-                    type: 'equipped',
-                    enabled: itemAny.system.equipped,
-                });
+            if (itemToggles.length > 0) {
+                characterData.itemToggles = itemToggles;
             }
-        });
-        // Add to character data if any found
-        if (itemVariants.length > 0) {
-            characterData.itemVariants = itemVariants;
-        }
-        if (itemToggles.length > 0) {
-            characterData.itemToggles = itemToggles;
         }
         // Extract spellcasting data (PF2e and D&D 5e)
         const spellcastingEntries = this.extractSpellcastingData(actor);

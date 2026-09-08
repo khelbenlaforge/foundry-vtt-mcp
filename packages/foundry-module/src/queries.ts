@@ -180,7 +180,13 @@ export class QueryHandlers {
   /**
    * Handle character information request
    */
-  private async handleGetCharacterInfo(data: { characterName?: string; characterId?: string }): Promise<any> {
+  private async handleGetCharacterInfo(data: {
+    characterName?: string;
+    characterId?: string;
+    itemsOffset?: number;
+    itemsLimit?: number;
+    includeVariantsAndToggles?: boolean;
+  }): Promise<any> {
     try {
       // SECURITY: Silent GM validation
       const gmCheck = this.validateGMAccess();
@@ -195,7 +201,11 @@ export class QueryHandlers {
         throw new Error('characterName or characterId is required');
       }
 
-      return await this.dataAccess.getCharacterInfo(identifier);
+      return await this.dataAccess.getCharacterInfo(identifier, {
+        ...(data.itemsOffset !== undefined ? { itemsOffset: data.itemsOffset } : {}),
+        ...(data.itemsLimit !== undefined ? { itemsLimit: data.itemsLimit } : {}),
+        ...(data.includeVariantsAndToggles !== undefined ? { includeVariantsAndToggles: data.includeVariantsAndToggles } : {}),
+      });
     } catch (error) {
       throw new Error(`Failed to get character info: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }

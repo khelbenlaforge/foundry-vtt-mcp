@@ -9,6 +9,11 @@ interface CharacterInfo {
   img?: string;
   system: Record<string, unknown>;
   items: CharacterItem[];
+  itemsTotal: number;
+  itemsReturned: number;
+  itemsOffset: number;
+  hasMoreItems: boolean;
+  nextItemsOffset?: number;
   effects: CharacterEffect[];
   actions?: any[]; // PF2e actions (strikes, spells, etc.)
   itemVariants?: any[]; // Item rule element variants (ChoiceSet, etc.)
@@ -47,7 +52,27 @@ interface CharacterItem {
   name: string;
   type: string;
   img?: string;
-  system: Record<string, unknown>;
+  system: CharacterItemSystem;
+}
+
+interface CharacterItemSystem {
+  quantity?: unknown;
+  traits?: {
+    value?: unknown;
+    rarity?: unknown;
+  };
+  level?: unknown;
+  actionType?: {
+    value?: unknown;
+  };
+  equipped?: unknown;
+  attunement?: unknown;
+}
+
+interface GetCharacterInfoOptions {
+  itemsOffset?: number;
+  itemsLimit?: number;
+  includeVariantsAndToggles?: boolean;
 }
 
 interface CharacterEffect {
@@ -1130,7 +1155,7 @@ export class FoundryDataAccess {
   /**
    * Get character/actor information by name or ID
    */
-  async getCharacterInfo(identifier: string): Promise<CharacterInfo> {
+  async getCharacterInfo(identifier: string, options: GetCharacterInfoOptions = {}): Promise<CharacterInfo> {
 
     let actor: Actor | undefined;
 
@@ -1149,6 +1174,56 @@ export class FoundryDataAccess {
       throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
     }
 
+    const itemsOffset = typeof options.itemsOffset === 'number' && Number.isFinite(options.itemsOffset)
+      ? Math.max(0, Math.floor(options.itemsOffset))
+      : 0;
+    const itemsLimit = typeof options.itemsLimit === 'number' && Number.isFinite(options.itemsLimit)
+      ? Math.max(1, Math.floor(options.itemsLimit))
+      : 200;
+
+    // Keep this field list in sync with formatItems/formatEffects/formatActions in
+    // packages/mcp-server/src/tools/character.ts; a mismatch silently loses data.
+    const trimmedItems: CharacterItem[] = actor.items.map(item => {
+      const itemSystem = item.system as any;
+      const system: CharacterItemSystem = {};
+
+      if (itemSystem?.quantity !== undefined) {
+        system.quantity = this.sanitizeData(itemSystem.quantity);
+      }
+      if (itemSystem?.traits?.value !== undefined || itemSystem?.traits?.rarity !== undefined) {
+        system.traits = {
+          ...(itemSystem.traits.value !== undefined ? { value: this.sanitizeData(itemSystem.traits.value) } : {}),
+          ...(itemSystem.traits.rarity !== undefined ? { rarity: this.sanitizeData(itemSystem.traits.rarity) } : {}),
+        };
+      }
+      if (itemSystem?.level !== undefined) {
+        system.level = itemSystem.level && typeof itemSystem.level === 'object' && itemSystem.level.value !== undefined
+          ? { value: this.sanitizeData(itemSystem.level.value) }
+          : this.sanitizeData(itemSystem.level);
+      }
+      if (itemSystem?.actionType?.value !== undefined) {
+        system.actionType = { value: this.sanitizeData(itemSystem.actionType.value) };
+      }
+      if (itemSystem?.equipped !== undefined) {
+        system.equipped = this.sanitizeData(itemSystem.equipped);
+      }
+      if (itemSystem?.attunement !== undefined) {
+        system.attunement = this.sanitizeData(itemSystem.attunement);
+      }
+
+      return {
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        ...(item.img ? { img: item.img } : {}),
+        system,
+      };
+    });
+    const itemsTotal = trimmedItems.length;
+    const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
+    const itemsReturned = items.length;
+    const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
+
     // Build character data structure
     const characterData: CharacterInfo = {
       id: actor.id || '',
@@ -1156,15 +1231,12 @@ export class FoundryDataAccess {
       type: actor.type,
       ...(actor.img ? { img: actor.img } : {}),
       system: this.sanitizeData((actor as any).system),
-      items: actor.items.map(item => {
-        return {
-          id: item.id,
-          name: item.name,
-          type: item.type,
-          ...(item.img ? { img: item.img } : {}),
-          system: this.sanitizeData(item.system, item.type === 'spell' ? 'spellSystem' : undefined),
-        };
-      }),
+      items,
+      itemsTotal,
+      itemsReturned,
+      itemsOffset,
+      hasMoreItems,
+      ...(hasMoreItems ? { nextItemsOffset: itemsOffset + itemsReturned } : {}),
       effects: actor.effects.map(effect => {
         const eff = effect as any;
         const dur = eff.duration;
@@ -1223,11 +1295,12 @@ export class FoundryDataAccess {
       }));
     }
 
-    // Include item variants and toggles
-    const itemVariants: any[] = [];
-    const itemToggles: any[] = [];
+    // Include item variants and toggles only when explicitly requested.
+    if (options.includeVariantsAndToggles) {
+      const itemVariants: any[] = [];
+      const itemToggles: any[] = [];
 
-    actor.items.forEach(item => {
+      actor.items.forEach(item => {
       const itemAny = item as any;
 
       // Extract rule element variants (e.g., weapon variants, stance toggles)
@@ -1271,14 +1344,15 @@ export class FoundryDataAccess {
           enabled: itemAny.system.equipped,
         });
       }
-    });
+      });
 
-    // Add to character data if any found
-    if (itemVariants.length > 0) {
-      characterData.itemVariants = itemVariants;
-    }
-    if (itemToggles.length > 0) {
-      characterData.itemToggles = itemToggles;
+      // Add to character data if any found
+      if (itemVariants.length > 0) {
+        characterData.itemVariants = itemVariants;
+      }
+      if (itemToggles.length > 0) {
+        characterData.itemToggles = itemToggles;
+      }
     }
 
     // Extract spellcasting data (PF2e and D&D 5e)

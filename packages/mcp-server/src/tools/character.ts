@@ -48,6 +48,14 @@ export class CharacterTools {
               type: 'string',
               description: 'Character name or ID to look up',
             },
+            offset: {
+              type: 'number',
+              description: 'Item offset for pagination; only needed for actors with unusually large inventories — most calls don\'t need these.',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum items to return; only needed for actors with unusually large inventories — most calls don\'t need these.',
+            },
           },
           required: ['identifier'],
         },
@@ -150,15 +158,19 @@ export class CharacterTools {
   async handleGetCharacter(args: any): Promise<any> {
     const schema = z.object({
       identifier: z.string().min(1, 'Character identifier cannot be empty'),
+      offset: z.number().int().nonnegative().optional(),
+      limit: z.number().int().positive().optional(),
     });
 
-    const { identifier } = schema.parse(args);
+    const { identifier, offset, limit } = schema.parse(args);
 
     this.logger.info('Getting character information', { identifier });
 
     try {
       const characterData = await this.foundryClient.query('foundry-mcp-bridge.getCharacterInfo', {
         characterName: identifier,
+        itemsOffset: offset,
+        itemsLimit: limit,
       });
 
       this.logger.debug('Successfully retrieved character data', {
@@ -167,7 +179,13 @@ export class CharacterTools {
       });
 
       // Format the response for Claude
-      return await this.formatCharacterResponse(characterData);
+      const response = await this.formatCharacterResponse(characterData);
+      if (characterData.hasMoreItems) {
+        response.hasMoreItems = true;
+        response.nextItemsOffset = characterData.nextItemsOffset;
+        response.itemsContinuation = `Call get-character with offset=${characterData.nextItemsOffset} to get more items.`;
+      }
+      return response;
 
     } catch (error) {
       this.logger.error('Failed to get character information', error);

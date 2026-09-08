@@ -163,7 +163,11 @@ export class QueryHandlers {
             if (!identifier) {
                 throw new Error('characterName or characterId is required');
             }
-            return await this.dataAccess.getCharacterInfo(identifier);
+            return await this.dataAccess.getCharacterInfo(identifier, {
+                ...(data.itemsOffset !== undefined ? { itemsOffset: data.itemsOffset } : {}),
+                ...(data.itemsLimit !== undefined ? { itemsLimit: data.itemsLimit } : {}),
+                ...(data.includeVariantsAndToggles !== undefined ? { includeVariantsAndToggles: data.includeVariantsAndToggles } : {}),
+            });
         }
         catch (error) {
             throw new Error(`Failed to get character info: ${error instanceof Error ? error.message : 'Unknown error'}`);
