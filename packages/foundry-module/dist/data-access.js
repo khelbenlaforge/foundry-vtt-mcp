@@ -3947,6 +3947,68 @@ export class FoundryDataAccess {
         }
     }
     /**
+     * Get Foundry's world-level role permissions, with optional ownership details
+     * for one world document.
+     */
+    async getPermissions(params = {}) {
+        this.validateFoundryState();
+        const { identifier, documentType } = params;
+        if ((identifier && !documentType) || (!identifier && documentType)) {
+            throw new Error('identifier and documentType must be provided together');
+        }
+        // Foundry v13/v14 exposes game.permissions as Record<permissionName, roleId[]>.
+        // Cast at this v9 type-package boundary; the runtime API is the supported source.
+        const gameAny = game;
+        const rawPermissions = Object.fromEntries(Object.entries(gameAny.permissions || {}).map(([permission, roles]) => [
+            permission,
+            Array.isArray(roles) ? [...roles] : roles,
+        ]));
+        const userRoles = CONST.USER_ROLES || {};
+        const permissionsByRole = Object.fromEntries(Object.entries(userRoles)
+            .filter(([, roleId]) => typeof roleId === 'number')
+            .map(([roleName]) => [roleName, []]));
+        for (const [permission, roleIds] of Object.entries(rawPermissions)) {
+            if (!Array.isArray(roleIds))
+                continue;
+            for (const [roleName, roleId] of Object.entries(userRoles)) {
+                if (typeof roleId === 'number' && roleIds.includes(roleId)) {
+                    permissionsByRole[roleName].push(permission);
+                }
+            }
+        }
+        const result = {
+            worldPermissions: {
+                raw: rawPermissions,
+                byRole: permissionsByRole,
+            },
+        };
+        if (!identifier || !documentType)
+            return result;
+        const document = this.findDocumentByIdentifier(identifier, documentType);
+        if (!document) {
+            throw new Error(`${documentType} not found: ${identifier}`);
+        }
+        const ownershipLevels = CONST.DOCUMENT_OWNERSHIP_LEVELS || {};
+        const ownershipNames = Object.fromEntries(Object.entries(ownershipLevels).map(([name, level]) => [level, name]));
+        const ownership = Object.entries(document.ownership || {}).map(([userId, level]) => {
+            const user = userId === 'default' ? undefined : game.users?.get(userId);
+            const numericPermission = Number(level);
+            return {
+                userId,
+                userName: user?.name || (userId === 'default' ? 'All Users (default)' : 'Unknown user'),
+                permission: ownershipNames[numericPermission] || String(level),
+                numericPermission,
+            };
+        });
+        result.document = {
+            id: document.id,
+            name: document.name,
+            type: documentType,
+            ownership,
+        };
+        return result;
+    }
+    /**
      * Get actor ownership information
      */
     async getActorOwnership(data) {
@@ -4007,6 +4069,27 @@ export class FoundryDataAccess {
                 return scene;
         }
         return Array.from(scenes || []).find((scene) => scene.name?.toLowerCase() === identifier.toLowerCase());
+    }
+    /** Find a journal entry by Foundry ID or exact name. */
+    findJournalEntryByIdentifier(identifier) {
+        const journals = game.journal;
+        if (identifier.length === 16) {
+            const journal = journals?.get(identifier);
+            if (journal)
+                return journal;
+        }
+        return Array.from(journals || []).find((journal) => journal.name?.toLowerCase() === identifier.toLowerCase());
+    }
+    /** Resolve only the document types supported by getPermissions. */
+    findDocumentByIdentifier(identifier, documentType) {
+        switch (documentType) {
+            case 'Actor':
+                return this.findActorByIdentifier(identifier);
+            case 'Scene':
+                return this.findSceneByIdentifier(identifier);
+            case 'JournalEntry':
+                return this.findJournalEntryByIdentifier(identifier);
+        }
     }
     /**
      * Get friendly NPCs from current scene

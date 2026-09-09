@@ -21,6 +21,7 @@ import { QuestCreationTools } from './tools/quest-creation.js';
 import { DiceRollTools } from './tools/dice-roll.js';
 import { CampaignManagementTools } from './tools/campaign-management.js';
 import { OwnershipTools } from './tools/ownership.js';
+import { PermissionsTools } from './tools/permissions.js';
 import { MapGenerationTools } from './tools/map-generation.js';
 import { TokenManipulationTools } from './tools/token-manipulation.js';
 import { DSA5CharacterCreator } from './systems/dsa5/character-creator.js';
@@ -786,6 +787,7 @@ async function startBackend() {
     const diceRollTools = new DiceRollTools({ foundryClient, logger });
     const campaignManagementTools = new CampaignManagementTools(foundryClient, logger);
     const ownershipTools = new OwnershipTools({ foundryClient, logger });
+    const permissionsTools = new PermissionsTools({ foundryClient, logger });
     const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
     // Initialize mapgen-style backend components for map generation
     let mapGenerationJobQueue = null;
@@ -938,6 +940,7 @@ async function startBackend() {
         ...diceRollTools.getToolDefinitions(),
         ...campaignManagementTools.getToolDefinitions(),
         ...ownershipTools.getToolDefinitions(),
+        ...permissionsTools.getToolDefinitions(),
         ...tokenManipulationTools.getToolDefinitions(),
         ...mapGenerationTools.getToolDefinitions(),
         ...itemImportTools.getToolDefinitions(),
@@ -1087,6 +1090,9 @@ async function startBackend() {
                                     break;
                                 case 'list-actor-ownership':
                                     result = await ownershipTools.handleToolCall('list-actor-ownership', args);
+                                    break;
+                                case 'get-permissions':
+                                    result = await permissionsTools.handleGetPermissions(args);
                                     break;
                                 // Token manipulation tools
                                 case 'move-token':

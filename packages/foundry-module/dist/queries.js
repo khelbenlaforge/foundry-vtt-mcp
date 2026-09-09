@@ -38,6 +38,8 @@ export class QueryHandlers {
         CONFIG.queries[`${modulePrefix}.switch-scene`] = this.handleSwitchScene.bind(this);
         // World queries
         CONFIG.queries[`${modulePrefix}.getWorldInfo`] = this.handleGetWorldInfo.bind(this);
+        // Permission queries
+        CONFIG.queries[`${modulePrefix}.getPermissions`] = this.handleGetPermissions.bind(this);
         // Utility queries
         CONFIG.queries[`${modulePrefix}.ping`] = this.handlePing.bind(this);
         // Phase 2 & 3: Write operation queries
@@ -1584,6 +1586,21 @@ export class QueryHandlers {
         }
         catch (error) {
             throw new Error(`Failed to search character items: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /** Handle Foundry world permission and optional document ownership request. */
+    async handleGetPermissions(data) {
+        try {
+            // SECURITY: Silent GM validation
+            const gmCheck = this.validateGMAccess();
+            if (!gmCheck.allowed) {
+                return { error: 'Access denied', success: false };
+            }
+            this.dataAccess.validateFoundryState();
+            return await this.dataAccess.getPermissions(data || {});
+        }
+        catch (error) {
+            throw new Error(`Failed to get permissions: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
     /**

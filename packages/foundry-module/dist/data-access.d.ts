@@ -650,6 +650,14 @@ export declare class FoundryDataAccess {
         error?: string;
     }>;
     /**
+     * Get Foundry's world-level role permissions, with optional ownership details
+     * for one world document.
+     */
+    getPermissions(params?: {
+        identifier?: string;
+        documentType?: 'Actor' | 'Scene' | 'JournalEntry';
+    }): Promise<any>;
+    /**
      * Get actor ownership information
      */
     getActorOwnership(data: {
@@ -665,6 +673,10 @@ export declare class FoundryDataAccess {
      * a 16-character document ID as a scene-name search.
      */
     private findSceneByIdentifier;
+    /** Find a journal entry by Foundry ID or exact name. */
+    private findJournalEntryByIdentifier;
+    /** Resolve only the document types supported by getPermissions. */
+    private findDocumentByIdentifier;
     /**
      * Get friendly NPCs from current scene
      */

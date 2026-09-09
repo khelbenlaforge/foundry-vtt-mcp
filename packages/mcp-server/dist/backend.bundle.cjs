@@ -113787,6 +113787,51 @@ var OwnershipTools = class {
   }
 };
 
+// dist/tools/permissions.js
+init_zod();
+var PermissionsTools = class {
+  foundryClient;
+  logger;
+  constructor({ foundryClient, logger }) {
+    this.foundryClient = foundryClient;
+    this.logger = logger.child({ component: "PermissionsTools" });
+  }
+  getToolDefinitions() {
+    return [{
+      name: "get-permissions",
+      description: "Show Foundry world permissions by user role. Optionally include the explicit ownership entries for one Actor, Scene, or JournalEntry.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          identifier: {
+            type: "string",
+            description: "Foundry ID or name of the Actor, Scene, or JournalEntry to inspect."
+          },
+          documentType: {
+            type: "string",
+            enum: ["Actor", "Scene", "JournalEntry"],
+            description: "Document type for identifier. Required when identifier is supplied."
+          }
+        }
+      }
+    }];
+  }
+  async handleGetPermissions(args) {
+    const params = external_exports.object({
+      identifier: external_exports.string().min(1).optional(),
+      documentType: external_exports.enum(["Actor", "Scene", "JournalEntry"]).optional()
+    }).refine((value) => Boolean(value.identifier) === Boolean(value.documentType), { message: "identifier and documentType must be provided together" }).parse(args);
+    this.logger.info("Getting Foundry permissions", { documentType: params.documentType, identifier: params.identifier });
+    const permissions = await this.foundryClient.query("foundry-mcp-bridge.getPermissions", params);
+    return {
+      success: true,
+      worldPermissions: permissions.worldPermissions.byRole,
+      worldPermissionsRaw: permissions.worldPermissions.raw,
+      ...permissions.document ? { document: permissions.document } : {}
+    };
+  }
+};
+
 // dist/tools/map-generation.js
 var MapGenerationTools = class {
   foundryClient;
@@ -115478,6 +115523,7 @@ async function startBackend() {
   const diceRollTools = new DiceRollTools({ foundryClient, logger });
   const campaignManagementTools = new CampaignManagementTools(foundryClient, logger);
   const ownershipTools = new OwnershipTools({ foundryClient, logger });
+  const permissionsTools = new PermissionsTools({ foundryClient, logger });
   const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
   let mapGenerationJobQueue = null;
   let mapGenerationComfyUIClient = null;
@@ -115616,6 +115662,7 @@ async function startBackend() {
     ...diceRollTools.getToolDefinitions(),
     ...campaignManagementTools.getToolDefinitions(),
     ...ownershipTools.getToolDefinitions(),
+    ...permissionsTools.getToolDefinitions(),
     ...tokenManipulationTools.getToolDefinitions(),
     ...mapGenerationTools.getToolDefinitions(),
     ...itemImportTools.getToolDefinitions()
@@ -115752,6 +115799,9 @@ async function startBackend() {
                   break;
                 case "list-actor-ownership":
                   result = await ownershipTools.handleToolCall("list-actor-ownership", args);
+                  break;
+                case "get-permissions":
+                  result = await permissionsTools.handleGetPermissions(args);
                   break;
                 case "move-token":
                   result = await tokenManipulationTools.handleMoveToken(args);

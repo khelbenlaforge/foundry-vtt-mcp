@@ -230,6 +230,8 @@ export declare class QueryHandlers {
      * Handle search character items request
      */
     private handleSearchCharacterItems;
+    /** Handle Foundry world permission and optional document ownership request. */
+    private handleGetPermissions;
     /**
      * Handle get character entity request
      */

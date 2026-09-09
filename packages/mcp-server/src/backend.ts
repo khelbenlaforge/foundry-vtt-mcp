@@ -37,6 +37,7 @@ import { DiceRollTools } from './tools/dice-roll.js';
 import { CampaignManagementTools } from './tools/campaign-management.js';
 
 import { OwnershipTools } from './tools/ownership.js';
+import { PermissionsTools } from './tools/permissions.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1091,6 +1092,7 @@ async function startBackend(): Promise<void> {
   const campaignManagementTools = new CampaignManagementTools(foundryClient, logger);
 
   const ownershipTools = new OwnershipTools({ foundryClient, logger });
+  const permissionsTools = new PermissionsTools({ foundryClient, logger });
 
   const tokenManipulationTools = new TokenManipulationTools({ foundryClient, logger });
 
@@ -1329,6 +1331,8 @@ async function startBackend(): Promise<void> {
     ...campaignManagementTools.getToolDefinitions(),
 
     ...ownershipTools.getToolDefinitions(),
+
+    ...permissionsTools.getToolDefinitions(),
 
     ...tokenManipulationTools.getToolDefinitions(),
 
@@ -1622,6 +1626,12 @@ async function startBackend(): Promise<void> {
                 case 'list-actor-ownership':
 
                   result = await ownershipTools.handleToolCall('list-actor-ownership', args);
+
+                  break;
+
+                case 'get-permissions':
+
+                  result = await permissionsTools.handleGetPermissions(args);
 
                   break;
 
