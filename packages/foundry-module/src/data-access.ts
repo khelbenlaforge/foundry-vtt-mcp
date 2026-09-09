@@ -6353,11 +6353,26 @@ export class FoundryDataAccess {
       // v14 renders the scene background through its default SceneLevel. Keep the
       // legacy scene field above for v13 compatibility, then align that level when
       // the runtime exposes one.
-      for (let i = 0; i < created.length; i++) {
-        const source = params.scenes[i];
-        if (source.background === undefined && source.backgroundColor === undefined) continue;
+      //
+      // createDocuments' returned array is NOT guaranteed to preserve request order
+      // (confirmed live: a 2-scene batch came back reversed relative to the input)
+      // -- correlate by name via a per-name queue rather than array position. A
+      // created document has no other stable link back to its source config until
+      // this point. Duplicate names within one create batch degrade to best-effort
+      // in-order matching for that name (documented risk, not fully resolvable
+      // without a synthetic per-request correlation token).
+      const sourceQueueByName = new Map<string, (typeof params.scenes)[number][]>();
+      for (const source of params.scenes) {
+        const queue = sourceQueueByName.get(source.name) ?? [];
+        queue.push(source);
+        sourceQueueByName.set(source.name, queue);
+      }
+      for (const createdScene of created as any[]) {
+        const scene = createdScene as any;
+        const queue = sourceQueueByName.get(scene.name);
+        const source = queue?.shift();
+        if (!source || (source.background === undefined && source.backgroundColor === undefined)) continue;
         try {
-          const scene = created[i] as any;
           const level = (scene.levels?.contents ?? scene.levels ?? [])[0] as any;
           if (level?.update) {
             const levelPatch: Record<string, any> = {};
