@@ -1181,9 +1181,15 @@ export class FoundryDataAccess {
       ? Math.max(1, Math.floor(options.itemsLimit))
       : 200;
 
+    // Single pass over actor.items backing both the trimmed projection below and
+    // the (paginated) variants/toggles block further down -- keeps both in the
+    // same offset/limit window instead of the latter silently reading the full
+    // unpaginated collection.
+    const allActorItems = Array.from(actor.items as unknown as Iterable<any>);
+
     // Keep this field list in sync with formatItems/formatEffects/formatActions in
     // packages/mcp-server/src/tools/character.ts; a mismatch silently loses data.
-    const trimmedItems: CharacterItem[] = actor.items.map(item => {
+    const trimmedItems: CharacterItem[] = allActorItems.map(item => {
       const itemSystem = item.system as any;
       const system: CharacterItemSystem = {};
 
@@ -1295,12 +1301,15 @@ export class FoundryDataAccess {
       }));
     }
 
-    // Include item variants and toggles only when explicitly requested.
+    // Include item variants and toggles only when explicitly requested. Scoped to
+    // the same itemsOffset/itemsLimit window as the trimmed items above -- this used
+    // to iterate the full actor.items collection regardless of pagination.
     if (options.includeVariantsAndToggles) {
       const itemVariants: any[] = [];
       const itemToggles: any[] = [];
+      const pagedActorItems = allActorItems.slice(itemsOffset, itemsOffset + itemsLimit);
 
-      actor.items.forEach(item => {
+      pagedActorItems.forEach(item => {
       const itemAny = item as any;
 
       // Extract rule element variants (e.g., weapon variants, stance toggles)
@@ -6211,6 +6220,14 @@ export class FoundryDataAccess {
    * replaces name, image, system data, and prototype token from the source, but
    * preserves this world's folder, ownership, flags, embedded items, and active
    * effects. It resolves only the recorded compendium UUID and never guesses.
+   *
+   * Known caveat: because `system` is replaced wholesale while items/effects are
+   * deliberately preserved (not replaced), any system-specific field under
+   * `system` that cross-references embedded-item ids (e.g. a "favorites" list
+   * keyed by item id) can end up pointing at ids from the compendium source's own
+   * item set rather than this actor's preserved ones. Not verified against a
+   * concrete field in the system versions this fork currently targets -- flagged
+   * here rather than patched blind against a guessed field name.
    */
   async refreshActorFromSource(params: {
     identifier: string;
@@ -6387,10 +6404,15 @@ export class FoundryDataAccess {
     }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
     const patches: Record<string, any>[] = [];
+    // Keyed by resolved scene id, not array position -- updateDocuments can return
+    // fewer documents than requested (e.g. a no-op update, or a preUpdate hook
+    // rejection from an installed module), which would misalign a positional zip.
+    const sourceByScenId = new Map<string, (typeof updates)[number]>();
 
     for (const update of updates) {
       const scene = this.findSceneByIdentifier(update.identifier);
       if (!scene) throw new Error(`Scene not found: ${update.identifier}`);
+      sourceByScenId.set(scene.id, update);
 
       const patch: Record<string, any> = { _id: scene.id };
       if (update.name !== undefined) patch.name = update.name;
@@ -6415,11 +6437,13 @@ export class FoundryDataAccess {
 
       // See createScenes: update the v14 default SceneLevel as well as the
       // Scene document whenever a background-related field was supplied.
-      for (let i = 0; i < updatedScenes.length; i++) {
-        const source = updates[i];
-        if (source.background === undefined && source.backgroundColor === undefined) continue;
+      // Correlated by id (sourceByScenId), not array position -- see the comment
+      // where that map is built above.
+      for (const updatedScene of updatedScenes as any[]) {
+        const scene = updatedScene as any;
+        const source = sourceByScenId.get(scene.id);
+        if (!source || (source.background === undefined && source.backgroundColor === undefined)) continue;
         try {
-          const scene = updatedScenes[i] as any;
           const level = (scene.levels?.contents ?? scene.levels ?? [])[0] as any;
           if (level?.update) {
             const levelPatch: Record<string, any> = {};
@@ -6451,6 +6475,12 @@ export class FoundryDataAccess {
    * scene. `game.world` does not expose getFlag/setFlag (no active-world Document
    * to attach flags to) -- game.settings is this fork's proven mechanism for
    * world-scoped persistent data (see 'rollStates'/'buttonMessageMap' in settings.ts).
+   *
+   * Known caveat: the read-modify-write against the 'sceneBackups' setting below
+   * is not atomic. Two concurrent deleteScenes/restoreScenes calls can race and
+   * silently drop one call's backup entry. Not addressed here -- this fork has no
+   * cross-call locking primitive today, and this tool is expected to be invoked
+   * one call at a time by a single GM-driven MCP client.
    */
   async deleteScenes(identifiers: string[]): Promise<{ deleted: Array<{ id: string; name: string }>; total: number }> {
     try {
@@ -6472,6 +6502,16 @@ export class FoundryDataAccess {
       for (const { scene } of resolved) {
         backups[scene.id] = scene.toObject();
       }
+      // Bound growth: full Scene documents are large, unlike the small rows
+      // rollStates/auditLog cap at 100 entries. Prune oldest-first (object key
+      // insertion order) past this cap -- a pruned scene can no longer be restored.
+      const backupIds = Object.keys(backups);
+      const MAX_SCENE_BACKUPS = 15;
+      if (backupIds.length > MAX_SCENE_BACKUPS) {
+        for (const staleId of backupIds.slice(0, backupIds.length - MAX_SCENE_BACKUPS)) {
+          delete backups[staleId];
+        }
+      }
       await game.settings.set(this.moduleId, 'sceneBackups', backups);
 
       const sceneClass = Scene as any;
@@ -6489,7 +6529,13 @@ export class FoundryDataAccess {
     }
   }
 
-  /** Recreate scenes from snapshots captured by deleteScenes, then consume them. */
+  /**
+   * Recreate scenes from snapshots captured by deleteScenes, then consume them.
+   * Prefer passing the backup key (the deleted scene's original Foundry id) as
+   * `identifier` over a name -- name lookup falls back to the first backup whose
+   * stored name matches, which is ambiguous if more than one deleted backup (or a
+   * still-live scene reusing that name) shares it.
+   */
   async restoreScenes(identifiers: string[]): Promise<{ restored: Array<{ id: string; name: string }>; total: number }> {
     try {
       const backups = { ...((game.settings.get(this.moduleId, 'sceneBackups') as any) || {}) } as Record<string, any>;

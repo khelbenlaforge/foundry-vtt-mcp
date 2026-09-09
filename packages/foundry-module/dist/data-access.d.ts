@@ -883,6 +883,14 @@ export declare class FoundryDataAccess {
      * replaces name, image, system data, and prototype token from the source, but
      * preserves this world's folder, ownership, flags, embedded items, and active
      * effects. It resolves only the recorded compendium UUID and never guesses.
+     *
+     * Known caveat: because `system` is replaced wholesale while items/effects are
+     * deliberately preserved (not replaced), any system-specific field under
+     * `system` that cross-references embedded-item ids (e.g. a "favorites" list
+     * keyed by item id) can end up pointing at ids from the compendium source's own
+     * item set rather than this actor's preserved ones. Not verified against a
+     * concrete field in the system versions this fork currently targets -- flagged
+     * here rather than patched blind against a guessed field name.
      */
     refreshActorFromSource(params: {
         identifier: string;
@@ -950,6 +958,12 @@ export declare class FoundryDataAccess {
      * scene. `game.world` does not expose getFlag/setFlag (no active-world Document
      * to attach flags to) -- game.settings is this fork's proven mechanism for
      * world-scoped persistent data (see 'rollStates'/'buttonMessageMap' in settings.ts).
+     *
+     * Known caveat: the read-modify-write against the 'sceneBackups' setting below
+     * is not atomic. Two concurrent deleteScenes/restoreScenes calls can race and
+     * silently drop one call's backup entry. Not addressed here -- this fork has no
+     * cross-call locking primitive today, and this tool is expected to be invoked
+     * one call at a time by a single GM-driven MCP client.
      */
     deleteScenes(identifiers: string[]): Promise<{
         deleted: Array<{
@@ -958,7 +972,13 @@ export declare class FoundryDataAccess {
         }>;
         total: number;
     }>;
-    /** Recreate scenes from snapshots captured by deleteScenes, then consume them. */
+    /**
+     * Recreate scenes from snapshots captured by deleteScenes, then consume them.
+     * Prefer passing the backup key (the deleted scene's original Foundry id) as
+     * `identifier` over a name -- name lookup falls back to the first backup whose
+     * stored name matches, which is ambiguous if more than one deleted backup (or a
+     * still-live scene reusing that name) shares it.
+     */
     restoreScenes(identifiers: string[]): Promise<{
         restored: Array<{
             id: string;
