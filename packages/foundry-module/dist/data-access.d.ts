@@ -859,6 +859,41 @@ export declare class FoundryDataAccess {
         total: number;
     }>;
     /**
+     * Set an actor's prototype-token image. Dynamic token rings are supported by
+     * Foundry v12+; the runtime API is intentionally accessed through `any`
+     * because this module's bundled Foundry typings are v9-era.
+     */
+    setActorToken(params: {
+        identifier: string;
+        imagePath: string;
+        ringEnabled?: boolean;
+        ringColor?: string;
+    }): Promise<{
+        success: boolean;
+        actorId: string;
+        name: string;
+        ringEnabled?: boolean;
+    }>;
+    /**
+     * Replace source-backed actor fields from the originating compendium entry.
+     *
+     * This deliberately requires `confirmOverwrite: true`: system data is
+     * system-specific, so there is no reliable generic way to distinguish base
+     * source stats from GM customizations (including current HP). The operation
+     * replaces name, image, system data, and prototype token from the source, but
+     * preserves this world's folder, ownership, flags, embedded items, and active
+     * effects. It resolves only the recorded compendium UUID and never guesses.
+     */
+    refreshActorFromSource(params: {
+        identifier: string;
+        confirmOverwrite?: boolean;
+    }): Promise<{
+        success: boolean;
+        actorId: string;
+        name: string;
+        sourceUuid: string;
+    }>;
+    /**
      * Create one or more scenes with the common map configuration fields exposed
      * directly. More specialized scene content (tokens, walls, tiles, etc.) is
      * intentionally managed by its dedicated tools.

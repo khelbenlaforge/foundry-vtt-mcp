@@ -35,6 +35,8 @@ export class ActorManagementTools {
           'Use action to select the operation: "create" (new actors), "update" (patch existing actors\' ' +
           'name/img/system fields), "delete" (remove actors entirely), "update-items" (patch embedded ' +
           'item fields), or "delete-items" (remove embedded items from an actor). ' +
+          '"set-token" updates an actor prototype token image (and optional dynamic ring); ' +
+          '"refresh-from-source" re-applies source actor data and requires explicit overwrite confirmation. ' +
           'For "update"/"update-items", system field patches are merged into the existing data — ' +
           'omitted fields are left untouched. Dot-notation system keys (e.g. "attributes.hp.-=temp") ' +
           'are supported and honour Foundry\'s "-=" deletion operator at any depth.',
@@ -50,11 +52,14 @@ export class ActorManagementTools {
                 'place',
                 'update-items',
                 'delete-items',
+                'set-token',
+                'refresh-from-source',
               ],
               description:
                 'Operation to perform: "create" / "update" / "delete" actors, ' +
                 '"place" existing world actors as tokens on the current scene, ' +
-                'or "update-items" / "delete-items" for embedded items.',
+                '"update-items" / "delete-items" for embedded items, "set-token" for an actor prototype token, ' +
+                'or "refresh-from-source" for an explicitly confirmed compendium overwrite.',
             },
             actors: {
               type: 'array',
@@ -114,7 +119,23 @@ export class ActorManagementTools {
             // ── update-items ─────────────────────────────────────────────────
             actorIdentifier: {
               type: 'string',
-              description: 'Actor ID or name that owns the items being updated/deleted (action: "update-items"/"delete-items")',
+              description: 'Actor ID or name (action: "update-items"/"delete-items"/"set-token"/"refresh-from-source")',
+            },
+            imagePath: {
+              type: 'string',
+              description: 'Prototype token image path (action: "set-token")',
+            },
+            ringEnabled: {
+              type: 'boolean',
+              description: 'Enable or disable Foundry dynamic token ring (action: "set-token")',
+            },
+            ringColor: {
+              type: 'string',
+              description: 'Dynamic token ring color, e.g. "#ff0000" (action: "set-token")',
+            },
+            confirmOverwrite: {
+              type: 'boolean',
+              description: 'Must be true for "refresh-from-source": replaces name, image, system data, and prototype token; embedded items/effects are preserved.',
             },
             itemUpdates: {
               type: 'array',
@@ -155,6 +176,8 @@ export class ActorManagementTools {
           'place',
           'update-items',
           'delete-items',
+          'set-token',
+          'refresh-from-source',
         ]),
       })
       .parse(args);
@@ -172,9 +195,13 @@ export class ActorManagementTools {
         return this.handleUpdateItems(args);
       case 'delete-items':
         return this.handleDeleteItems(args);
+      case 'set-token':
+        return this.handleSetToken(args);
+      case 'refresh-from-source':
+        return this.handleRefreshFromSource(args);
       default:
         throw new Error(
-          `Unknown action "${action}" — expected one of: create, update, delete, place, update-items, delete-items`
+          `Unknown action "${action}" — expected one of: create, update, delete, place, update-items, delete-items, set-token, refresh-from-source`
         );
     }
   }
@@ -275,6 +302,48 @@ export class ActorManagementTools {
       return await this.foundryClient.query('foundry-mcp-bridge.deleteActors', { ids });
     } catch (error) {
       this.errorHandler.handleToolError(error, 'manage-actors (delete)', 'actor deletion');
+    }
+  }
+
+  // ── actor polish ───────────────────────────────────────────────────────────
+
+  private async handleSetToken(args: any): Promise<any> {
+    const schema = z.object({
+      actorIdentifier: z.string().min(1),
+      imagePath: z.string().min(1),
+      ringEnabled: z.boolean().optional(),
+      ringColor: z.string().min(1).optional(),
+    });
+    const { actorIdentifier, imagePath, ringEnabled, ringColor } = schema.parse(args);
+
+    this.logger.info('Setting actor prototype token', { actorIdentifier, ringEnabled });
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.setActorToken', {
+        identifier: actorIdentifier,
+        imagePath,
+        ringEnabled,
+        ringColor,
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'manage-actors (set-token)', 'actor token update');
+    }
+  }
+
+  private async handleRefreshFromSource(args: any): Promise<any> {
+    const schema = z.object({
+      actorIdentifier: z.string().min(1),
+      confirmOverwrite: z.literal(true),
+    });
+    const { actorIdentifier, confirmOverwrite } = schema.parse(args);
+
+    this.logger.info('Hard-refreshing actor from compendium source', { actorIdentifier });
+    try {
+      return await this.foundryClient.query('foundry-mcp-bridge.refreshActorFromSource', {
+        identifier: actorIdentifier,
+        confirmOverwrite,
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, 'manage-actors (refresh-from-source)', 'actor source refresh');
     }
   }
 

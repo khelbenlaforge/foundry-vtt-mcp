@@ -4987,6 +4987,95 @@ export class FoundryDataAccess {
             throw error;
         }
     }
+    /**
+     * Set an actor's prototype-token image. Dynamic token rings are supported by
+     * Foundry v12+; the runtime API is intentionally accessed through `any`
+     * because this module's bundled Foundry typings are v9-era.
+     */
+    async setActorToken(params) {
+        this.validateFoundryState();
+        const actor = this.findActorByIdentifier(params.identifier);
+        if (!actor)
+            throw new Error(`Actor not found: ${params.identifier}`);
+        const actorAny = actor;
+        const patch = {
+            'prototypeToken.texture.src': params.imagePath,
+        };
+        // A ring needs its own subject texture; otherwise Foundry renders the ring
+        // around an empty subject instead of the token artwork.
+        if (params.ringEnabled !== undefined) {
+            patch['prototypeToken.ring.enabled'] = params.ringEnabled;
+            if (params.ringEnabled) {
+                patch['prototypeToken.ring.subject.texture'] = params.imagePath;
+                if (params.ringColor !== undefined) {
+                    patch['prototypeToken.ring.colors.ring'] = params.ringColor;
+                }
+            }
+        }
+        await actorAny.update(patch);
+        this.auditLog('setActorToken', { identifier: params.identifier }, 'success');
+        return {
+            success: true,
+            actorId: actorAny.id ?? '',
+            name: actorAny.name ?? '',
+            ...(params.ringEnabled !== undefined
+                ? { ringEnabled: !!actorAny.prototypeToken?.ring?.enabled }
+                : {}),
+        };
+    }
+    /**
+     * Replace source-backed actor fields from the originating compendium entry.
+     *
+     * This deliberately requires `confirmOverwrite: true`: system data is
+     * system-specific, so there is no reliable generic way to distinguish base
+     * source stats from GM customizations (including current HP). The operation
+     * replaces name, image, system data, and prototype token from the source, but
+     * preserves this world's folder, ownership, flags, embedded items, and active
+     * effects. It resolves only the recorded compendium UUID and never guesses.
+     */
+    async refreshActorFromSource(params) {
+        this.validateFoundryState();
+        if (params.confirmOverwrite !== true) {
+            throw new Error('actor-refresh-from-source overwrites the actor\'s name, image, system data, and prototype token. Set confirmOverwrite: true to proceed.');
+        }
+        const actor = this.findActorByIdentifier(params.identifier);
+        if (!actor)
+            throw new Error(`Actor not found: ${params.identifier}`);
+        const actorAny = actor;
+        // Foundry v11+ records this in _stats; older documents used core.sourceId.
+        const sourceUuid = actorAny._stats?.compendiumSource || actorAny.flags?.core?.sourceId;
+        if (!sourceUuid) {
+            throw new Error(`Actor "${actorAny.name}" has no recorded compendium source (_stats.compendiumSource or flags.core.sourceId)`);
+        }
+        const sourceParts = String(sourceUuid).split('.');
+        if (sourceParts[0] !== 'Compendium' || sourceParts.length < 4) {
+            throw new Error(`Actor "${actorAny.name}" has an unsupported compendium source UUID: ${sourceUuid}`);
+        }
+        const documentId = sourceParts[sourceParts.length - 1];
+        const packId = sourceParts.slice(1, -1).join('.');
+        // Reuse the same full-document resolution path used by actor creation.
+        const source = await this.getCompendiumDocumentFull(packId, documentId);
+        const sourceData = source.fullData;
+        if (source.type !== actorAny.type) {
+            throw new Error(`Compendium source type "${source.type}" does not match actor type "${actorAny.type}"`);
+        }
+        const patch = {
+            name: sourceData.name,
+            img: sourceData.img,
+            system: foundry.utils.deepClone(sourceData.system || {}),
+        };
+        if (sourceData.prototypeToken !== undefined) {
+            patch.prototypeToken = foundry.utils.deepClone(sourceData.prototypeToken);
+        }
+        await actorAny.update(patch);
+        this.auditLog('refreshActorFromSource', { identifier: params.identifier, sourceUuid }, 'success');
+        return {
+            success: true,
+            actorId: actorAny.id ?? '',
+            name: actorAny.name ?? '',
+            sourceUuid: String(sourceUuid),
+        };
+    }
     // ─── Generic scene CRUD ─────────────────────────────────────────────────────
     /**
      * Create one or more scenes with the common map configuration fields exposed

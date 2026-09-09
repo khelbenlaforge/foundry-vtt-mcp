@@ -1,0 +1,358 @@
+import { z } from 'zod';
+import { ErrorHandler } from '../utils/error-handler.js';
+/**
+ * Generic actor/embedded-item CRUD, ported from upstream ea8c3b4 and stripped of
+ * mgt2e-specific skill normalization — this fork is dnd5e-only.
+ */
+export class ActorManagementTools {
+    foundryClient;
+    logger;
+    errorHandler;
+    constructor({ foundryClient, logger }) {
+        this.foundryClient = foundryClient;
+        this.logger = logger.child({ component: 'ActorManagementTools' });
+        this.errorHandler = new ErrorHandler(this.logger);
+    }
+    /**
+     * Tool definitions for generic actor management operations
+     */
+    getToolDefinitions() {
+        return [
+            {
+                name: 'manage-actors',
+                description: 'Create, update, or delete actors, and update or delete items embedded on an actor. ' +
+                    'Use action to select the operation: "create" (new actors), "update" (patch existing actors\' ' +
+                    'name/img/system fields), "delete" (remove actors entirely), "update-items" (patch embedded ' +
+                    'item fields), or "delete-items" (remove embedded items from an actor). ' +
+                    '"set-token" updates an actor prototype token image (and optional dynamic ring); ' +
+                    '"refresh-from-source" re-applies source actor data and requires explicit overwrite confirmation. ' +
+                    'For "update"/"update-items", system field patches are merged into the existing data — ' +
+                    'omitted fields are left untouched. Dot-notation system keys (e.g. "attributes.hp.-=temp") ' +
+                    'are supported and honour Foundry\'s "-=" deletion operator at any depth.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        action: {
+                            type: 'string',
+                            enum: [
+                                'create',
+                                'update',
+                                'delete',
+                                'place',
+                                'update-items',
+                                'delete-items',
+                                'set-token',
+                                'refresh-from-source',
+                            ],
+                            description: 'Operation to perform: "create" / "update" / "delete" actors, ' +
+                                '"place" existing world actors as tokens on the current scene, ' +
+                                '"update-items" / "delete-items" for embedded items, "set-token" for an actor prototype token, ' +
+                                'or "refresh-from-source" for an explicitly confirmed compendium overwrite.',
+                        },
+                        actors: {
+                            type: 'array',
+                            description: 'Actors to create (action: "create")',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    name: { type: 'string' },
+                                    type: { type: 'string', description: 'Foundry actor type, e.g. "character" or "npc"' },
+                                    img: { type: 'string' },
+                                    system: { type: 'object', description: 'System-specific data for the actor' },
+                                },
+                                required: ['name', 'type'],
+                            },
+                        },
+                        folder: {
+                            type: 'string',
+                            description: 'Folder name to create actors in (action: "create", default "Foundry MCP Actors")',
+                        },
+                        updates: {
+                            type: 'array',
+                            description: 'Actor patches to apply (action: "update")',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    id: { type: 'string' },
+                                    name: { type: 'string' },
+                                    img: { type: 'string' },
+                                    system: { type: 'object' },
+                                },
+                                required: ['id'],
+                            },
+                        },
+                        ids: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Actor IDs to delete (action: "delete")',
+                        },
+                        // ── place ───────────────────────────────────────────────────────
+                        actorIds: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            minItems: 1,
+                            description: 'Required for "place". IDs of existing world actors to drop as tokens on the ' +
+                                'current scene.',
+                        },
+                        placement: {
+                            type: 'string',
+                            enum: ['random', 'grid', 'center'],
+                            description: 'For "place": token layout strategy. Defaults to "random".',
+                        },
+                        hidden: {
+                            type: 'boolean',
+                            description: 'For "place": create the tokens hidden from players. Defaults to false.',
+                        },
+                        // ── update-items ─────────────────────────────────────────────────
+                        actorIdentifier: {
+                            type: 'string',
+                            description: 'Actor ID or name (action: "update-items"/"delete-items"/"set-token"/"refresh-from-source")',
+                        },
+                        imagePath: {
+                            type: 'string',
+                            description: 'Prototype token image path (action: "set-token")',
+                        },
+                        ringEnabled: {
+                            type: 'boolean',
+                            description: 'Enable or disable Foundry dynamic token ring (action: "set-token")',
+                        },
+                        ringColor: {
+                            type: 'string',
+                            description: 'Dynamic token ring color, e.g. "#ff0000" (action: "set-token")',
+                        },
+                        confirmOverwrite: {
+                            type: 'boolean',
+                            description: 'Must be true for "refresh-from-source": replaces name, image, system data, and prototype token; embedded items/effects are preserved.',
+                        },
+                        itemUpdates: {
+                            type: 'array',
+                            description: 'Embedded item patches to apply (action: "update-items")',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    id: { type: 'string' },
+                                    name: { type: 'string' },
+                                    img: { type: 'string' },
+                                    system: { type: 'object' },
+                                },
+                                required: ['id'],
+                            },
+                        },
+                        itemIds: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Embedded item IDs to delete (action: "delete-items")',
+                        },
+                    },
+                    required: ['action'],
+                },
+            },
+        ];
+    }
+    /**
+     * Dispatch a manage-actors call to the appropriate handler based on args.action
+     */
+    async handleManageActors(args) {
+        const { action } = z
+            .object({
+            action: z.enum([
+                'create',
+                'update',
+                'delete',
+                'place',
+                'update-items',
+                'delete-items',
+                'set-token',
+                'refresh-from-source',
+            ]),
+        })
+            .parse(args);
+        switch (action) {
+            case 'create':
+                return this.handleCreate(args);
+            case 'update':
+                return this.handleUpdate(args);
+            case 'delete':
+                return this.handleDelete(args);
+            case 'place':
+                return this.handlePlace(args);
+            case 'update-items':
+                return this.handleUpdateItems(args);
+            case 'delete-items':
+                return this.handleDeleteItems(args);
+            case 'set-token':
+                return this.handleSetToken(args);
+            case 'refresh-from-source':
+                return this.handleRefreshFromSource(args);
+            default:
+                throw new Error(`Unknown action "${action}" — expected one of: create, update, delete, place, update-items, delete-items, set-token, refresh-from-source`);
+        }
+    }
+    // ── place ─────────────────────────────────────────────────────────────────
+    async handlePlace(args) {
+        const schema = z.object({
+            actorIds: z.array(z.string().min(1)).min(1),
+            placement: z.enum(['random', 'grid', 'center']).default('random'),
+            hidden: z.boolean().default(false),
+        });
+        const { actorIds, placement, hidden } = schema.parse(args);
+        this.logger.info('Placing existing actors on scene', {
+            count: actorIds.length,
+            placement,
+            hidden,
+        });
+        // The module already exposes a GM-gated addActorsToScene query taking existing
+        // world actor IDs; expose it here rather than only via create-from-compendium.
+        return await this.foundryClient.query('foundry-mcp-bridge.addActorsToScene', {
+            actorIds,
+            placement,
+            hidden,
+        });
+    }
+    // ── create ───────────────────────────────────────────────────────────────
+    async handleCreate(args) {
+        const schema = z.object({
+            actors: z
+                .array(z.object({
+                name: z.string().min(1),
+                type: z.string().min(1),
+                img: z.string().optional(),
+                system: z.record(z.any()).optional(),
+            }))
+                .min(1),
+            folder: z.string().optional(),
+        });
+        const { actors, folder } = schema.parse(args);
+        this.logger.info('Creating actors', { count: actors.length });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.createActors', { actors, folder });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (create)', 'actor creation');
+        }
+    }
+    // ── update ───────────────────────────────────────────────────────────────
+    async handleUpdate(args) {
+        const schema = z.object({
+            updates: z
+                .array(z.object({
+                id: z.string().min(1),
+                name: z.string().optional(),
+                img: z.string().optional(),
+                system: z.record(z.any()).optional(),
+            }))
+                .min(1),
+        });
+        const { updates } = schema.parse(args);
+        this.logger.info('Updating actors', { count: updates.length });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.updateActors', { updates });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (update)', 'actor update');
+        }
+    }
+    // ── delete ───────────────────────────────────────────────────────────────
+    async handleDelete(args) {
+        const schema = z.object({
+            ids: z.array(z.string().min(1)).min(1),
+        });
+        const { ids } = schema.parse(args);
+        this.logger.info('Deleting actors', { count: ids.length });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.deleteActors', { ids });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (delete)', 'actor deletion');
+        }
+    }
+    // ── actor polish ───────────────────────────────────────────────────────────
+    async handleSetToken(args) {
+        const schema = z.object({
+            actorIdentifier: z.string().min(1),
+            imagePath: z.string().min(1),
+            ringEnabled: z.boolean().optional(),
+            ringColor: z.string().min(1).optional(),
+        });
+        const { actorIdentifier, imagePath, ringEnabled, ringColor } = schema.parse(args);
+        this.logger.info('Setting actor prototype token', { actorIdentifier, ringEnabled });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.setActorToken', {
+                identifier: actorIdentifier,
+                imagePath,
+                ringEnabled,
+                ringColor,
+            });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (set-token)', 'actor token update');
+        }
+    }
+    async handleRefreshFromSource(args) {
+        const schema = z.object({
+            actorIdentifier: z.string().min(1),
+            confirmOverwrite: z.literal(true),
+        });
+        const { actorIdentifier, confirmOverwrite } = schema.parse(args);
+        this.logger.info('Hard-refreshing actor from compendium source', { actorIdentifier });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.refreshActorFromSource', {
+                identifier: actorIdentifier,
+                confirmOverwrite,
+            });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (refresh-from-source)', 'actor source refresh');
+        }
+    }
+    // ── update-items ─────────────────────────────────────────────────────────
+    async handleUpdateItems(args) {
+        const schema = z.object({
+            actorIdentifier: z.string().min(1),
+            itemUpdates: z
+                .array(z.object({
+                id: z.string().min(1),
+                name: z.string().optional(),
+                img: z.string().optional(),
+                system: z.record(z.any()).optional(),
+            }))
+                .min(1),
+        });
+        const { actorIdentifier, itemUpdates } = schema.parse(args);
+        this.logger.info('Updating actor embedded items', {
+            actorIdentifier,
+            count: itemUpdates.length,
+        });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.updateActorItems', {
+                actorIdentifier,
+                itemUpdates,
+            });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (update-items)', 'actor item update');
+        }
+    }
+    // ── delete-items ─────────────────────────────────────────────────────────
+    async handleDeleteItems(args) {
+        const schema = z.object({
+            actorIdentifier: z.string().min(1),
+            itemIds: z.array(z.string().min(1)).min(1),
+        });
+        const { actorIdentifier, itemIds } = schema.parse(args);
+        this.logger.info('Deleting actor embedded items', {
+            actorIdentifier,
+            count: itemIds.length,
+        });
+        try {
+            return await this.foundryClient.query('foundry-mcp-bridge.deleteActorItems', {
+                actorIdentifier,
+                itemIds,
+            });
+        }
+        catch (error) {
+            this.errorHandler.handleToolError(error, 'manage-actors (delete-items)', 'actor item deletion');
+        }
+    }
+}
+//# sourceMappingURL=actor-management.js.map

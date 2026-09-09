@@ -106054,7 +106054,7 @@ var ActorManagementTools = class {
     return [
       {
         name: "manage-actors",
-        description: `Create, update, or delete actors, and update or delete items embedded on an actor. Use action to select the operation: "create" (new actors), "update" (patch existing actors' name/img/system fields), "delete" (remove actors entirely), "update-items" (patch embedded item fields), or "delete-items" (remove embedded items from an actor). For "update"/"update-items", system field patches are merged into the existing data \u2014 omitted fields are left untouched. Dot-notation system keys (e.g. "attributes.hp.-=temp") are supported and honour Foundry's "-=" deletion operator at any depth.`,
+        description: `Create, update, or delete actors, and update or delete items embedded on an actor. Use action to select the operation: "create" (new actors), "update" (patch existing actors' name/img/system fields), "delete" (remove actors entirely), "update-items" (patch embedded item fields), or "delete-items" (remove embedded items from an actor). "set-token" updates an actor prototype token image (and optional dynamic ring); "refresh-from-source" re-applies source actor data and requires explicit overwrite confirmation. For "update"/"update-items", system field patches are merged into the existing data \u2014 omitted fields are left untouched. Dot-notation system keys (e.g. "attributes.hp.-=temp") are supported and honour Foundry's "-=" deletion operator at any depth.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -106066,9 +106066,11 @@ var ActorManagementTools = class {
                 "delete",
                 "place",
                 "update-items",
-                "delete-items"
+                "delete-items",
+                "set-token",
+                "refresh-from-source"
               ],
-              description: 'Operation to perform: "create" / "update" / "delete" actors, "place" existing world actors as tokens on the current scene, or "update-items" / "delete-items" for embedded items.'
+              description: 'Operation to perform: "create" / "update" / "delete" actors, "place" existing world actors as tokens on the current scene, "update-items" / "delete-items" for embedded items, "set-token" for an actor prototype token, or "refresh-from-source" for an explicitly confirmed compendium overwrite.'
             },
             actors: {
               type: "array",
@@ -106126,7 +106128,23 @@ var ActorManagementTools = class {
             // ── update-items ─────────────────────────────────────────────────
             actorIdentifier: {
               type: "string",
-              description: 'Actor ID or name that owns the items being updated/deleted (action: "update-items"/"delete-items")'
+              description: 'Actor ID or name (action: "update-items"/"delete-items"/"set-token"/"refresh-from-source")'
+            },
+            imagePath: {
+              type: "string",
+              description: 'Prototype token image path (action: "set-token")'
+            },
+            ringEnabled: {
+              type: "boolean",
+              description: 'Enable or disable Foundry dynamic token ring (action: "set-token")'
+            },
+            ringColor: {
+              type: "string",
+              description: 'Dynamic token ring color, e.g. "#ff0000" (action: "set-token")'
+            },
+            confirmOverwrite: {
+              type: "boolean",
+              description: 'Must be true for "refresh-from-source": replaces name, image, system data, and prototype token; embedded items/effects are preserved.'
             },
             itemUpdates: {
               type: "array",
@@ -106164,7 +106182,9 @@ var ActorManagementTools = class {
         "delete",
         "place",
         "update-items",
-        "delete-items"
+        "delete-items",
+        "set-token",
+        "refresh-from-source"
       ])
     }).parse(args);
     switch (action) {
@@ -106180,8 +106200,12 @@ var ActorManagementTools = class {
         return this.handleUpdateItems(args);
       case "delete-items":
         return this.handleDeleteItems(args);
+      case "set-token":
+        return this.handleSetToken(args);
+      case "refresh-from-source":
+        return this.handleRefreshFromSource(args);
       default:
-        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, update, delete, place, update-items, delete-items`);
+        throw new Error(`Unknown action "${action}" \u2014 expected one of: create, update, delete, place, update-items, delete-items, set-token, refresh-from-source`);
     }
   }
   // ── place ─────────────────────────────────────────────────────────────────
@@ -106251,6 +106275,43 @@ var ActorManagementTools = class {
       return await this.foundryClient.query("foundry-mcp-bridge.deleteActors", { ids });
     } catch (error) {
       this.errorHandler.handleToolError(error, "manage-actors (delete)", "actor deletion");
+    }
+  }
+  // ── actor polish ───────────────────────────────────────────────────────────
+  async handleSetToken(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      imagePath: external_exports.string().min(1),
+      ringEnabled: external_exports.boolean().optional(),
+      ringColor: external_exports.string().min(1).optional()
+    });
+    const { actorIdentifier, imagePath, ringEnabled, ringColor } = schema2.parse(args);
+    this.logger.info("Setting actor prototype token", { actorIdentifier, ringEnabled });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.setActorToken", {
+        identifier: actorIdentifier,
+        imagePath,
+        ringEnabled,
+        ringColor
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (set-token)", "actor token update");
+    }
+  }
+  async handleRefreshFromSource(args) {
+    const schema2 = external_exports.object({
+      actorIdentifier: external_exports.string().min(1),
+      confirmOverwrite: external_exports.literal(true)
+    });
+    const { actorIdentifier, confirmOverwrite } = schema2.parse(args);
+    this.logger.info("Hard-refreshing actor from compendium source", { actorIdentifier });
+    try {
+      return await this.foundryClient.query("foundry-mcp-bridge.refreshActorFromSource", {
+        identifier: actorIdentifier,
+        confirmOverwrite
+      });
+    } catch (error) {
+      this.errorHandler.handleToolError(error, "manage-actors (refresh-from-source)", "actor source refresh");
     }
   }
   // ── update-items ─────────────────────────────────────────────────────────

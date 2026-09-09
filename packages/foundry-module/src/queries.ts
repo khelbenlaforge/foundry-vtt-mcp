@@ -87,6 +87,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.createActors`] = this.handleCreateActors.bind(this);
     CONFIG.queries[`${modulePrefix}.updateActors`] = this.handleUpdateActors.bind(this);
     CONFIG.queries[`${modulePrefix}.deleteActors`] = this.handleDeleteActors.bind(this);
+    CONFIG.queries[`${modulePrefix}.setActorToken`] = this.handleSetActorToken.bind(this);
+    CONFIG.queries[`${modulePrefix}.refreshActorFromSource`] = this.handleRefreshActorFromSource.bind(this);
     CONFIG.queries[`${modulePrefix}.updateActorItems`] = this.handleUpdateActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.deleteActorItems`] = this.handleDeleteActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.addActorItems`] = this.handleAddActorItems.bind(this);
@@ -2017,6 +2019,46 @@ export class QueryHandlers {
       return await this.dataAccess.deleteActors(data.ids);
     } catch (error) {
       throw new Error(`Failed to delete actors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleSetActorToken(data: {
+    identifier: string;
+    imagePath: string;
+    ringEnabled?: boolean;
+    ringColor?: string;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+
+      this.dataAccess.validateFoundryState();
+      if (!data?.identifier || !data?.imagePath) {
+        throw new Error('identifier and imagePath are required');
+      }
+
+      return await this.dataAccess.setActorToken(data);
+    } catch (error) {
+      throw new Error(`Failed to set actor token: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async handleRefreshActorFromSource(data: {
+    identifier: string;
+    confirmOverwrite?: boolean;
+  }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+
+      this.dataAccess.validateFoundryState();
+      if (!data?.identifier) throw new Error('identifier is required');
+
+      return await this.dataAccess.refreshActorFromSource(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to refresh actor from compendium source: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
