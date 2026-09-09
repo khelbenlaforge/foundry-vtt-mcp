@@ -2901,6 +2901,13 @@ export class FoundryDataAccess {
                         effects: sourceData.effects || [],
                         folder: null, // Don't inherit folder
                         prototypeToken: sourceData.prototypeToken, // Include prototype token
+                        // Record the compendium origin so refreshActorFromSource can find it later.
+                        // Actor.create() doesn't auto-stamp this the way Foundry's own drag-and-drop
+                        // compendium import does, since we're assembling plain data ourselves.
+                        flags: {
+                            ...(sourceData.flags || {}),
+                            core: { ...(sourceData.flags?.core || {}), sourceId: `Compendium.${packId}.Actor.${itemId}` },
+                        },
                     };
                     // Fix remote image URLs - normalize to local paths
                     if (actorData.prototypeToken?.texture?.src?.startsWith('http')) {
@@ -3120,6 +3127,13 @@ export class FoundryDataAccess {
                 actorData.name = customName;
             if (!actorData.type)
                 actorData.type = sourceDoc.type || 'npc';
+            // Record the compendium origin so refreshActorFromSource can find it later.
+            // Actor.createDocuments() doesn't auto-stamp this the way Foundry's own
+            // drag-and-drop compendium import does, since we're assembling plain data.
+            actorData.flags = {
+                ...(actorData.flags || {}),
+                core: { ...(actorData.flags?.core || {}), sourceId: `Compendium.${sourceDoc.pack}.Actor.${sourceDoc.id}` },
+            };
             // Organize created actors in a folder - use "Foundry MCP Creatures" for generic monsters  
             const folderId = await this.getOrCreateFolder('Foundry MCP Creatures', 'Actor');
             if (folderId) {
@@ -5047,18 +5061,21 @@ export class FoundryDataAccess {
         if (!sourceUuid) {
             throw new Error(`Actor "${actorAny.name}" has no recorded compendium source (_stats.compendiumSource or flags.core.sourceId)`);
         }
-        const sourceParts = String(sourceUuid).split('.');
-        if (sourceParts[0] !== 'Compendium' || sourceParts.length < 4) {
+        if (!String(sourceUuid).startsWith('Compendium.')) {
             throw new Error(`Actor "${actorAny.name}" has an unsupported compendium source UUID: ${sourceUuid}`);
         }
-        const documentId = sourceParts[sourceParts.length - 1];
-        const packId = sourceParts.slice(1, -1).join('.');
-        // Reuse the same full-document resolution path used by actor creation.
-        const source = await this.getCompendiumDocumentFull(packId, documentId);
-        const sourceData = source.fullData;
-        if (source.type !== actorAny.type) {
-            throw new Error(`Compendium source type "${source.type}" does not match actor type "${actorAny.type}"`);
+        // Use Foundry's own UUID resolver rather than hand-parsing dot-separated
+        // segments -- a compendium UUID is Compendium.<scope>.<packName>.<DocumentType>.<id>,
+        // and <packName> itself is not guaranteed to be dot-free, so naive splitting
+        // misidentifies the pack ID.
+        const sourceDocument = await globalThis.fromUuid(sourceUuid);
+        if (!sourceDocument) {
+            throw new Error(`Actor "${actorAny.name}"'s recorded compendium source no longer exists: ${sourceUuid}`);
         }
+        if (sourceDocument.type !== actorAny.type) {
+            throw new Error(`Compendium source type "${sourceDocument.type}" does not match actor type "${actorAny.type}"`);
+        }
+        const sourceData = this.sanitizeData(sourceDocument.toObject());
         const patch = {
             name: sourceData.name,
             img: sourceData.img,
