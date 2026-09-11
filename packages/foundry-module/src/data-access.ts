@@ -1232,10 +1232,15 @@ export class FoundryDataAccess {
     const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
     const itemsReturned = items.length;
     const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
+    console.log('[foundry-mcp-bridge][size] items: ' + JSON.stringify(items).length + ' bytes (actor=' + actor.name + ')');
 
     const __actorSystemSanitizeStart = performance.now();
     const actorSystem = this.sanitizeData((actor as any).system);
     console.log(`[foundry-mcp-bridge][timing] actor-system-sanitize: ${(performance.now() - __actorSystemSanitizeStart).toFixed(2)}ms (actor=${actor.name})`);
+    console.log('[foundry-mcp-bridge][size] actor.system total: ' + JSON.stringify(actorSystem).length + ' bytes (actor=' + actor.name + ')');
+    for (const key of Object.keys(actorSystem)) {
+      console.log('[foundry-mcp-bridge][size] actor.system.' + key + ': ' + JSON.stringify(actorSystem[key]).length + ' bytes (actor=' + actor.name + ')');
+    }
 
     const __effectsMapStart = performance.now();
     const effects = actor.effects.map(effect => {
@@ -1260,6 +1265,7 @@ export class FoundryDataAccess {
       };
     });
     console.log(`[foundry-mcp-bridge][timing] effects-map: ${(performance.now() - __effectsMapStart).toFixed(2)}ms (actor=${actor.name})`);
+    console.log('[foundry-mcp-bridge][size] effects: ' + JSON.stringify(effects).length + ' bytes (actor=' + actor.name + ')');
 
     // Build character data structure
     const characterData: CharacterInfo = {
@@ -1381,6 +1387,7 @@ export class FoundryDataAccess {
     const __spellcastingExtractionStart = performance.now();
     const spellcastingEntries = this.extractSpellcastingData(actor);
     console.log(`[foundry-mcp-bridge][timing] spellcasting-extraction: ${(performance.now() - __spellcastingExtractionStart).toFixed(2)}ms (actor=${actor.name})`);
+    console.log('[foundry-mcp-bridge][size] spellcasting: ' + JSON.stringify(spellcastingEntries).length + ' bytes (actor=' + actor.name + ')');
     if (spellcastingEntries.length > 0) {
       characterData.spellcasting = spellcastingEntries;
     }
