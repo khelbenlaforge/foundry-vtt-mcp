@@ -1240,6 +1240,30 @@ export class FoundryDataAccess {
     console.log('[foundry-mcp-bridge][size] actor.system total: ' + JSON.stringify(actorSystem).length + ' bytes (actor=' + actor.name + ')');
     for (const key of Object.keys(actorSystem)) {
       console.log('[foundry-mcp-bridge][size] actor.system.' + key + ': ' + JSON.stringify(actorSystem[key]).length + ' bytes (actor=' + actor.name + ')');
+      if (key === 'attributes' && actorSystem[key] && typeof actorSystem[key] === 'object') {
+        const attributes = actorSystem[key] as Record<string, unknown>;
+        let largestSubKey: string | undefined;
+        let largestSubKeySize = 0;
+        for (const subKey of Object.keys(attributes)) {
+          const subKeySize = JSON.stringify(attributes[subKey]).length;
+          console.log('[foundry-mcp-bridge][size] actor.system.attributes.' + subKey + ': ' + subKeySize + ' bytes (actor=' + actor.name + ')');
+          if (subKeySize > largestSubKeySize) {
+            largestSubKey = subKey;
+            largestSubKeySize = subKeySize;
+          }
+        }
+        const largestSubKeyValue = largestSubKey ? attributes[largestSubKey] : undefined;
+        if (
+          largestSubKey &&
+          largestSubKeyValue &&
+          typeof largestSubKeyValue === 'object' &&
+          (Array.isArray(largestSubKeyValue) || Object.getPrototypeOf(largestSubKeyValue) === Object.prototype)
+        ) {
+          for (const childKey of Object.keys(largestSubKeyValue)) {
+            console.log('[foundry-mcp-bridge][size] actor.system.attributes.' + largestSubKey + '.' + childKey + ': ' + JSON.stringify((largestSubKeyValue as Record<string, unknown>)[childKey]).length + ' bytes (actor=' + actor.name + ')');
+          }
+        }
+      }
     }
 
     const __effectsMapStart = performance.now();
