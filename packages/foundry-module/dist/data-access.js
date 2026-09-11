@@ -751,7 +751,6 @@ export class FoundryDataAccess {
         if (!actor) {
             throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
         }
-        const __fnStart = performance.now();
         const itemsOffset = typeof options.itemsOffset === 'number' && Number.isFinite(options.itemsOffset)
             ? Math.max(0, Math.floor(options.itemsOffset))
             : 0;
@@ -765,7 +764,6 @@ export class FoundryDataAccess {
         const allActorItems = Array.from(actor.items);
         // Keep this field list in sync with formatItems/formatEffects/formatActions in
         // packages/mcp-server/src/tools/character.ts; a mismatch silently loses data.
-        const __itemsProjectionStart = performance.now();
         const trimmedItems = allActorItems.map(item => {
             const itemSystem = item.system;
             const system = {};
@@ -800,42 +798,11 @@ export class FoundryDataAccess {
                 system,
             };
         });
-        console.log(`[foundry-mcp-bridge][timing] items-projection: ${(performance.now() - __itemsProjectionStart).toFixed(2)}ms (actor=${actor.name})`);
         const itemsTotal = trimmedItems.length;
         const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
         const itemsReturned = items.length;
         const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
-        console.log('[foundry-mcp-bridge][size] items: ' + JSON.stringify(items).length + ' bytes (actor=' + actor.name + ')');
-        const __actorSystemSanitizeStart = performance.now();
         const actorSystem = this.sanitizeData(actor.system);
-        console.log(`[foundry-mcp-bridge][timing] actor-system-sanitize: ${(performance.now() - __actorSystemSanitizeStart).toFixed(2)}ms (actor=${actor.name})`);
-        console.log('[foundry-mcp-bridge][size] actor.system total: ' + JSON.stringify(actorSystem).length + ' bytes (actor=' + actor.name + ')');
-        for (const key of Object.keys(actorSystem)) {
-            console.log('[foundry-mcp-bridge][size] actor.system.' + key + ': ' + JSON.stringify(actorSystem[key]).length + ' bytes (actor=' + actor.name + ')');
-            if (key === 'attributes' && actorSystem[key] && typeof actorSystem[key] === 'object') {
-                const attributes = actorSystem[key];
-                let largestSubKey;
-                let largestSubKeySize = 0;
-                for (const subKey of Object.keys(attributes)) {
-                    const subKeySize = JSON.stringify(attributes[subKey]).length;
-                    console.log('[foundry-mcp-bridge][size] actor.system.attributes.' + subKey + ': ' + subKeySize + ' bytes (actor=' + actor.name + ')');
-                    if (subKeySize > largestSubKeySize) {
-                        largestSubKey = subKey;
-                        largestSubKeySize = subKeySize;
-                    }
-                }
-                const largestSubKeyValue = largestSubKey ? attributes[largestSubKey] : undefined;
-                if (largestSubKey &&
-                    largestSubKeyValue &&
-                    typeof largestSubKeyValue === 'object' &&
-                    (Array.isArray(largestSubKeyValue) || Object.getPrototypeOf(largestSubKeyValue) === Object.prototype)) {
-                    for (const childKey of Object.keys(largestSubKeyValue)) {
-                        console.log('[foundry-mcp-bridge][size] actor.system.attributes.' + largestSubKey + '.' + childKey + ': ' + JSON.stringify(largestSubKeyValue[childKey]).length + ' bytes (actor=' + actor.name + ')');
-                    }
-                }
-            }
-        }
-        const __effectsMapStart = performance.now();
         const effects = actor.effects.map(effect => {
             const eff = effect;
             const dur = eff.duration;
@@ -857,8 +824,6 @@ export class FoundryDataAccess {
                 } : {}),
             };
         });
-        console.log(`[foundry-mcp-bridge][timing] effects-map: ${(performance.now() - __effectsMapStart).toFixed(2)}ms (actor=${actor.name})`);
-        console.log('[foundry-mcp-bridge][size] effects: ' + JSON.stringify(effects).length + ' bytes (actor=' + actor.name + ')');
         // Build character data structure
         const characterData = {
             id: actor.id || '',
@@ -878,9 +843,7 @@ export class FoundryDataAccess {
         // onto the serialized system payload so downstream consumers do not depend
         // on compatibility/stale fields under actor.system.skills.*.
         if (game.system.id === 'dnd5e' && characterData.system?.skills) {
-            const __getRollDataStart = performance.now();
             const rollData = actor.getRollData?.();
-            console.log(`[foundry-mcp-bridge][timing] get-roll-data: ${(performance.now() - __getRollDataStart).toFixed(2)}ms (actor=${actor.name})`);
             const rollSkills = rollData?.skills;
             if (rollSkills && typeof rollSkills === 'object') {
                 for (const [skillKey, skillData] of Object.entries(characterData.system.skills)) {
@@ -969,14 +932,10 @@ export class FoundryDataAccess {
             }
         }
         // Extract spellcasting data (PF2e and D&D 5e)
-        const __spellcastingExtractionStart = performance.now();
         const spellcastingEntries = this.extractSpellcastingData(actor);
-        console.log(`[foundry-mcp-bridge][timing] spellcasting-extraction: ${(performance.now() - __spellcastingExtractionStart).toFixed(2)}ms (actor=${actor.name})`);
-        console.log('[foundry-mcp-bridge][size] spellcasting: ' + JSON.stringify(spellcastingEntries).length + ' bytes (actor=' + actor.name + ')');
         if (spellcastingEntries.length > 0) {
             characterData.spellcasting = spellcastingEntries;
         }
-        console.log(`[foundry-mcp-bridge][timing] total-and-payload-size: ${(performance.now() - __fnStart).toFixed(2)}ms (actor=${actor.name}, payloadSize=${JSON.stringify(characterData).length})`);
         return characterData;
     }
     /**
@@ -2499,7 +2458,7 @@ export class FoundryDataAccess {
             'credential', 'session', 'cookie', 'private'
         ];
         const problematicKeys = [
-            'parent', '_parent', 'collection', 'apps', 'document', '_document',
+            'parent', '_parent', 'actor', 'collection', 'apps', 'document', '_document',
             'constructor', 'prototype', '__proto__', 'valueOf', 'toString',
             // dnd5e item leveling metadata; full of cycles back to the actor and other items.
             // Not gameplay-relevant for LLM consumers.
