@@ -1230,7 +1230,7 @@ export class FoundryDataAccess {
     const itemsReturned = items.length;
     const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
 
-    const actorSystem = this.sanitizeData((actor as any).system);
+    const actorSystem = this.sanitizeData((actor as any).system, undefined, [actor]);
 
     const effects = actor.effects.map(effect => {
       const eff = effect as any;
@@ -3048,7 +3048,7 @@ export class FoundryDataAccess {
   /**
    * Sanitize data to remove sensitive information and make it JSON-safe
    */
-  private sanitizeData(data: any, context?: 'spellSystem'): any {
+  private sanitizeData(data: any, context?: 'spellSystem', seedVisited?: any[]): any {
     if (data === null || data === undefined) {
       return data;
     }
@@ -3059,7 +3059,15 @@ export class FoundryDataAccess {
 
     try {
       // removeSensitiveFields now returns a sanitized copy
-      const sanitized = this.removeSensitiveFields(data, new WeakSet(), 0, undefined, context);
+      const visited = new WeakSet<object>();
+      if (seedVisited) {
+        for (const obj of seedVisited) {
+          if (obj && typeof obj === 'object') {
+            visited.add(obj);
+          }
+        }
+      }
+      const sanitized = this.removeSensitiveFields(data, visited, 0, undefined, context);
       
       // Use custom JSON serializer to avoid deprecated property warnings
       const jsonString = this.safeJSONStringify(sanitized);
@@ -3144,7 +3152,7 @@ export class FoundryDataAccess {
     ];
 
     const problematicKeys = [
-      'parent', '_parent', 'actor', 'collection', 'apps', 'document', '_document',
+      'parent', '_parent', 'collection', 'apps', 'document', '_document',
       'constructor', 'prototype', '__proto__', 'valueOf', 'toString',
       // dnd5e item leveling metadata; full of cycles back to the actor and other items.
       // Not gameplay-relevant for LLM consumers.

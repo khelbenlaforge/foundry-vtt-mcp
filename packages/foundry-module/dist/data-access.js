@@ -802,7 +802,7 @@ export class FoundryDataAccess {
         const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
         const itemsReturned = items.length;
         const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
-        const actorSystem = this.sanitizeData(actor.system);
+        const actorSystem = this.sanitizeData(actor.system, undefined, [actor]);
         const effects = actor.effects.map(effect => {
             const eff = effect;
             const dur = eff.duration;
@@ -2376,7 +2376,7 @@ export class FoundryDataAccess {
     /**
      * Sanitize data to remove sensitive information and make it JSON-safe
      */
-    sanitizeData(data, context) {
+    sanitizeData(data, context, seedVisited) {
         if (data === null || data === undefined) {
             return data;
         }
@@ -2385,7 +2385,15 @@ export class FoundryDataAccess {
         }
         try {
             // removeSensitiveFields now returns a sanitized copy
-            const sanitized = this.removeSensitiveFields(data, new WeakSet(), 0, undefined, context);
+            const visited = new WeakSet();
+            if (seedVisited) {
+                for (const obj of seedVisited) {
+                    if (obj && typeof obj === 'object') {
+                        visited.add(obj);
+                    }
+                }
+            }
+            const sanitized = this.removeSensitiveFields(data, visited, 0, undefined, context);
             // Use custom JSON serializer to avoid deprecated property warnings
             const jsonString = this.safeJSONStringify(sanitized);
             return JSON.parse(jsonString);
@@ -2458,7 +2466,7 @@ export class FoundryDataAccess {
             'credential', 'session', 'cookie', 'private'
         ];
         const problematicKeys = [
-            'parent', '_parent', 'actor', 'collection', 'apps', 'document', '_document',
+            'parent', '_parent', 'collection', 'apps', 'document', '_document',
             'constructor', 'prototype', '__proto__', 'valueOf', 'toString',
             // dnd5e item leveling metadata; full of cycles back to the actor and other items.
             // Not gameplay-relevant for LLM consumers.
