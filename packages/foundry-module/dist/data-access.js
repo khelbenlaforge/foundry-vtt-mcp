@@ -751,6 +751,7 @@ export class FoundryDataAccess {
         if (!actor) {
             throw new Error(`${ERROR_MESSAGES.CHARACTER_NOT_FOUND}: ${identifier}`);
         }
+        const __fnStart = performance.now();
         const itemsOffset = typeof options.itemsOffset === 'number' && Number.isFinite(options.itemsOffset)
             ? Math.max(0, Math.floor(options.itemsOffset))
             : 0;
@@ -764,6 +765,7 @@ export class FoundryDataAccess {
         const allActorItems = Array.from(actor.items);
         // Keep this field list in sync with formatItems/formatEffects/formatActions in
         // packages/mcp-server/src/tools/character.ts; a mismatch silently loses data.
+        const __itemsProjectionStart = performance.now();
         const trimmedItems = allActorItems.map(item => {
             const itemSystem = item.system;
             const system = {};
@@ -798,50 +800,59 @@ export class FoundryDataAccess {
                 system,
             };
         });
+        console.log(`[foundry-mcp-bridge][timing] items-projection: ${(performance.now() - __itemsProjectionStart).toFixed(2)}ms (actor=${actor.name})`);
         const itemsTotal = trimmedItems.length;
         const items = trimmedItems.slice(itemsOffset, itemsOffset + itemsLimit);
         const itemsReturned = items.length;
         const hasMoreItems = itemsOffset + itemsReturned < itemsTotal;
+        const __actorSystemSanitizeStart = performance.now();
+        const actorSystem = this.sanitizeData(actor.system);
+        console.log(`[foundry-mcp-bridge][timing] actor-system-sanitize: ${(performance.now() - __actorSystemSanitizeStart).toFixed(2)}ms (actor=${actor.name})`);
+        const __effectsMapStart = performance.now();
+        const effects = actor.effects.map(effect => {
+            const eff = effect;
+            const dur = eff.duration;
+            // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
+            // (deprecated since v14, removed in v16). Fall back to the raw _source value
+            // (not the live getter) so a v13 document never triggers the deprecation warning.
+            const durRaw = eff._source?.duration;
+            return {
+                id: effect.id,
+                name: eff.name || eff.label || 'Unknown Effect',
+                ...(eff.icon ? { icon: eff.icon } : {}),
+                disabled: eff.disabled,
+                ...(dur ? {
+                    duration: {
+                        type: dur.units ?? durRaw?.type ?? 'none',
+                        duration: dur.seconds ?? durRaw?.duration,
+                        remaining: dur.remaining,
+                    }
+                } : {}),
+            };
+        });
+        console.log(`[foundry-mcp-bridge][timing] effects-map: ${(performance.now() - __effectsMapStart).toFixed(2)}ms (actor=${actor.name})`);
         // Build character data structure
         const characterData = {
             id: actor.id || '',
             name: actor.name || '',
             type: actor.type,
             ...(actor.img ? { img: actor.img } : {}),
-            system: this.sanitizeData(actor.system),
+            system: actorSystem,
             items,
             itemsTotal,
             itemsReturned,
             itemsOffset,
             hasMoreItems,
             ...(hasMoreItems ? { nextItemsOffset: itemsOffset + itemsReturned } : {}),
-            effects: actor.effects.map(effect => {
-                const eff = effect;
-                const dur = eff.duration;
-                // Foundry v14+ renamed duration.type -> .units and duration.duration -> .seconds
-                // (deprecated since v14, removed in v16). Fall back to the raw _source value
-                // (not the live getter) so a v13 document never triggers the deprecation warning.
-                const durRaw = eff._source?.duration;
-                return {
-                    id: effect.id,
-                    name: eff.name || eff.label || 'Unknown Effect',
-                    ...(eff.icon ? { icon: eff.icon } : {}),
-                    disabled: eff.disabled,
-                    ...(dur ? {
-                        duration: {
-                            type: dur.units ?? durRaw?.type ?? 'none',
-                            duration: dur.seconds ?? durRaw?.duration,
-                            remaining: dur.remaining,
-                        }
-                    } : {}),
-                };
-            }),
+            effects,
         };
         // D&D 5e skill totals are authoritatively exposed via roll data. Copy them
         // onto the serialized system payload so downstream consumers do not depend
         // on compatibility/stale fields under actor.system.skills.*.
         if (game.system.id === 'dnd5e' && characterData.system?.skills) {
+            const __getRollDataStart = performance.now();
             const rollData = actor.getRollData?.();
+            console.log(`[foundry-mcp-bridge][timing] get-roll-data: ${(performance.now() - __getRollDataStart).toFixed(2)}ms (actor=${actor.name})`);
             const rollSkills = rollData?.skills;
             if (rollSkills && typeof rollSkills === 'object') {
                 for (const [skillKey, skillData] of Object.entries(characterData.system.skills)) {
@@ -930,10 +941,13 @@ export class FoundryDataAccess {
             }
         }
         // Extract spellcasting data (PF2e and D&D 5e)
+        const __spellcastingExtractionStart = performance.now();
         const spellcastingEntries = this.extractSpellcastingData(actor);
+        console.log(`[foundry-mcp-bridge][timing] spellcasting-extraction: ${(performance.now() - __spellcastingExtractionStart).toFixed(2)}ms (actor=${actor.name})`);
         if (spellcastingEntries.length > 0) {
             characterData.spellcasting = spellcastingEntries;
         }
+        console.log(`[foundry-mcp-bridge][timing] total-and-payload-size: ${(performance.now() - __fnStart).toFixed(2)}ms (actor=${actor.name}, payloadSize=${JSON.stringify(characterData).length})`);
         return characterData;
     }
     /**
